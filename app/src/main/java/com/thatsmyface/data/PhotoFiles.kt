@@ -5,8 +5,8 @@ import android.content.Context
 import android.content.Intent
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
-import android.graphics.Matrix
-import android.media.ExifInterface
+import android.graphics.ColorSpace
+import android.graphics.ImageDecoder
 import android.net.Uri
 import android.os.Build
 import android.provider.DocumentsContract
@@ -115,19 +115,15 @@ class PhotoFiles(private val context: Context) {
     suspend fun thumbnail(photo: Photo): String? = withContext(Dispatchers.IO) {
         protectAccess {
             val uri = Uri.parse(photo.uri)
-            val options = BitmapFactory.Options().apply { inJustDecodeBounds = true }
-            open(uri).use { BitmapFactory.decodeStream(it, null, options) }
-            require(options.outWidth > 0 && options.outHeight > 0) { "This image format could not be previewed." }
-            var sample = 1
-            while (maxOf(options.outWidth, options.outHeight) / sample > 192) sample *= 2
-            val decoded = open(uri).use {
-                BitmapFactory.decodeStream(it, null, BitmapFactory.Options().apply { inSampleSize = sample })
-            } ?: return@protectAccess null
-            val orientation = runCatching {
-                open(uri).use { ExifInterface(it).getAttributeInt(ExifInterface.TAG_ORIENTATION, ExifInterface.ORIENTATION_NORMAL) }
-            }.getOrDefault(ExifInterface.ORIENTATION_NORMAL)
-            val matrix = orientationMatrix(orientation)
-            val bitmap = if (matrix.isIdentity) decoded else Bitmap.createBitmap(decoded, 0, 0, decoded.width, decoded.height, matrix, true)
+            val bitmap = ImageDecoder.decodeBitmap(ImageDecoder.createSource(resolver, originalUri(uri))) { decoder, info, _ ->
+                val width = info.size.width
+                val height = info.size.height
+                require(width > 0 && height > 0 && width.toLong() * height <= 120_000_000)
+                val scale = minOf(1.0, 192.0 / maxOf(width, height))
+                decoder.allocator = ImageDecoder.ALLOCATOR_SOFTWARE
+                decoder.setTargetColorSpace(ColorSpace.get(ColorSpace.Named.SRGB))
+                decoder.setTargetSize(maxOf(1, (width * scale).toInt()), maxOf(1, (height * scale).toInt()))
+            }
             try {
                 var preview: String? = null
                 for (quality in listOf(75, 60, 45)) {
@@ -142,8 +138,7 @@ class PhotoFiles(private val context: Context) {
                 }
                 preview
             } finally {
-                if (bitmap !== decoded) bitmap.recycle()
-                decoded.recycle()
+                bitmap.recycle()
             }
         }
     }
@@ -205,6 +200,14 @@ class PhotoFiles(private val context: Context) {
     }
 
     private fun open(uri: Uri): InputStream {
+        return try {
+            resolver.openInputStream(originalUri(uri)) ?: throw FileNotFoundException()
+        } catch (_: UnsupportedOperationException) {
+            throw originalMetadataError()
+        }
+    }
+
+    private fun originalUri(uri: Uri): Uri {
         requireContentUri(uri)
         val mediaUri = when {
             uri.authority == MediaStore.AUTHORITY -> uri
@@ -212,14 +215,11 @@ class PhotoFiles(private val context: Context) {
             Build.VERSION.SDK_INT >= 31 && uri.authority == "com.android.externalstorage.documents" -> MediaStore.getMediaUri(context, uri)
             else -> null
         }
-        val original = mediaUri?.let(MediaStore::setRequireOriginal) ?: uri
-        return try {
-            resolver.openInputStream(original) ?: throw FileNotFoundException()
-        } catch (_: UnsupportedOperationException) {
-            throw PhotoAccessException(PhotoAvailability.PERMISSION_REVOKED,
-                "Allow original photo metadata in Photos before importing or sharing. This keeps original bytes, including location metadata.")
-        }
+        return mediaUri?.let(MediaStore::setRequireOriginal) ?: uri
     }
+
+    private fun originalMetadataError() = PhotoAccessException(PhotoAvailability.PERMISSION_REVOKED,
+        "Allow original photo metadata in Photos before importing or sharing. This keeps original bytes, including location metadata.")
 
     @Suppress("DEPRECATION")
     private fun findSaved(collection: Uri, name: String): Pair<Uri, Boolean>? {
@@ -259,20 +259,10 @@ class PhotoFiles(private val context: Context) {
         throw PhotoAccessException(PhotoAvailability.MISSING, "This photo or folder is missing. Select it again if it moved.")
     } catch (_: java.io.IOException) {
         throw PhotoAccessException(PhotoAvailability.UNREADABLE, "This photo cannot be read. Make sure it is stored on this phone and try again.")
+    } catch (_: UnsupportedOperationException) {
+        throw originalMetadataError()
     } catch (_: IllegalArgumentException) {
         throw PhotoAccessException(PhotoAvailability.UNREADABLE, "Choose a supported photo smaller than 100 MB and 120 megapixels using the Android picker.")
-    }
-
-    private fun orientationMatrix(orientation: Int) = Matrix().apply {
-        when (orientation) {
-            ExifInterface.ORIENTATION_FLIP_HORIZONTAL -> setScale(-1f, 1f)
-            ExifInterface.ORIENTATION_ROTATE_180 -> setRotate(180f)
-            ExifInterface.ORIENTATION_FLIP_VERTICAL -> setScale(1f, -1f)
-            ExifInterface.ORIENTATION_TRANSPOSE -> { setRotate(90f); postScale(-1f, 1f) }
-            ExifInterface.ORIENTATION_ROTATE_90 -> setRotate(90f)
-            ExifInterface.ORIENTATION_TRANSVERSE -> { setRotate(-90f); postScale(-1f, 1f) }
-            ExifInterface.ORIENTATION_ROTATE_270 -> setRotate(-90f)
-        }
     }
 
     private companion object {
