@@ -10,3 +10,5 @@ local.properties
 *.keystore
 captures/
 *.hprof
+__pycache__/
+*.pyc
