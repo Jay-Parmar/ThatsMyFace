@@ -16,3 +16,10 @@ Apache License 2.0, see OpenCV-APACHE-2.0.txt and OpenCV-THIRD-PARTY.txt.
 Model source revision: 47534e27c9851bb1128ccc0102f1145e27f23f98
 https://github.com/opencv/opencv_zoo
 Model provenance and exact checksums are documented in docs/MODEL.md.
+
+Invitation QR scanning and rendering:
+ZXing core 3.5.3, Apache License 2.0. See ZXing-APACHE-2.0.txt and
+ZXing-NOTICE.txt. Source: https://github.com/zxing/zxing/tree/zxing-3.5.3
+JourneyApps ZXing Android Embedded 4.3.0, Apache License 2.0.
+See JourneyApps-APACHE-2.0.txt.
+Source: https://github.com/journeyapps/zxing-android-embedded/tree/v4.3.0

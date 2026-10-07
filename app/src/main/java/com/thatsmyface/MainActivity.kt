@@ -1,34 +1,26 @@
 package com.thatsmyface
 
 import android.os.Bundle
+import android.graphics.Color
 import androidx.activity.ComponentActivity
+import androidx.activity.SystemBarStyle
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
-import androidx.compose.foundation.layout.Arrangement
-import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.fillMaxSize
-import androidx.compose.foundation.layout.padding
-import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.Surface
-import androidx.compose.material3.Text
-import androidx.compose.material3.darkColorScheme
-import androidx.compose.ui.Modifier
-import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.unit.dp
+import androidx.lifecycle.ViewModelProvider
+import com.thatsmyface.ui.ThatsMyFaceApp
 
 class MainActivity : ComponentActivity() {
+    private lateinit var model: AppModel
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        enableEdgeToEdge()
-        setContent {
-            MaterialTheme(colorScheme = darkColorScheme(primary = Color(0xFFD6ED82), background = Color(0xFF111410))) {
-                Surface(modifier = Modifier.fillMaxSize()) {
-                    Column(Modifier.padding(32.dp), verticalArrangement = Arrangement.Center) {
-                        Text("ThatsMyFace", style = MaterialTheme.typography.headlineLarge)
-                        Text("If you're in it, find it.", style = MaterialTheme.typography.titleMedium)
-                    }
-                }
-            }
-        }
+        enableEdgeToEdge(statusBarStyle = SystemBarStyle.dark(Color.TRANSPARENT),
+            navigationBarStyle = SystemBarStyle.dark(Color.TRANSPARENT))
+        model = ViewModelProvider(this)[AppModel::class.java]
+        setContent { ThatsMyFaceApp(model) }
+    }
+
+    override fun onStop() {
+        model.stopSharing()
+        super.onStop()
     }
 }
