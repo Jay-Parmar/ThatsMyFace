@@ -4,7 +4,7 @@ Sharing runs only during an intentional foreground session. Both phones need com
 
 ## Pairing and access
 
-The app uses Google Nearby Connections with the cluster strategy. Both people compare the transport's verification code and explicitly accept. An accepted connection exchanges an event-secret HMAC bound to the event, sender identity, nickname, and current verification code. Application membership checks must finish before `allowPeer` unlocks private messages or files. A face match never opens access.
+The app uses Google Nearby Connections with the cluster strategy. Both people compare the transport's verification code and explicitly accept. An accepted connection exchanges an event-secret HMAC bound to the event, sender identity, nickname, and current verification code. Each phone persists and admits the peer, then sends an `EventReady` acknowledgment. Private exchange starts after both acknowledgments, so one phone's slower storage cannot race another phone's catalog. A face match never opens access.
 
 Nicknames and event-specific service identifiers are advertised nearby. Do not put sensitive details in nicknames. Invitations contain an event secret, so show them only to intended friends. A shared invitation is not individual identity authentication. Compare the code with the actual friend on every new connection.
 
@@ -31,7 +31,7 @@ The pinned dependency is `com.google.android.gms:play-services-nearby:19.3.0`. V
 
 Permission requests are feature-specific. Android 10 through 12L needs location permissions for nearby discovery; Android 12 and newer also needs Bluetooth permissions; Android 13 and newer needs nearby Wi-Fi permission. Selected source files use granted Android content URIs. Android 17 adds local-network permission requirements when targeting API 37 or newer; this app targets 36 and needs a new permission review before increasing that target. Turn Bluetooth and Wi-Fi on manually; the app does not depend on the SDK enabling radios.
 
-The adapter has automated protocol tests. Actual offline pairing, file URI behavior across vendors, throughput, and two-phone interruption recovery require the real-device checklist. An emulator build does not establish physical nearby interoperability.
+The adapter has automated protocol tests. Paired-session instrumentation exercises actual encrypted stores, approval state, MediaStore copies, retries, and corruption handling with a test-only transport boundary. Actual offline pairing, file URI behavior across vendors, throughput, and two-phone interruption recovery require the real-device checklist. These tests do not establish physical nearby interoperability.
 
 The manifest declarations for the app's minSdk 29 and targetSdk 36 are:
 

@@ -18,7 +18,7 @@ import kotlinx.coroutines.withContext
 
 class LocalDataException(message: String) : Exception(message)
 
-class LocalStore(context: Context) {
+class LocalStore(context: Context, private val keyAlias: String = KEY_ALIAS) {
     private val file = AtomicFile(File(context.noBackupFilesDir, "local-state.v1.enc"))
     private val mutex = Mutex()
     private val mutableState = MutableStateFlow(AppState())
@@ -45,7 +45,7 @@ class LocalStore(context: Context) {
     suspend fun clearAll() = withContext(Dispatchers.IO) {
         mutex.withLock {
             file.delete()
-            keyStore().deleteEntry(KEY_ALIAS)
+            keyStore().deleteEntry(keyAlias)
             mutableState.value = AppState()
             loaded = true
         }
@@ -83,12 +83,12 @@ class LocalStore(context: Context) {
     }
 
     private fun encryptionKey(create: Boolean): SecretKey {
-        val existing = keyStore().getKey(KEY_ALIAS, null) as? SecretKey
+        val existing = keyStore().getKey(keyAlias, null) as? SecretKey
         if (existing != null) return existing
         check(create) { "Local encryption key is unavailable." }
         return KeyGenerator.getInstance(KeyProperties.KEY_ALGORITHM_AES, "AndroidKeyStore").run {
             init(
-                KeyGenParameterSpec.Builder(KEY_ALIAS, KeyProperties.PURPOSE_ENCRYPT or KeyProperties.PURPOSE_DECRYPT)
+                KeyGenParameterSpec.Builder(keyAlias, KeyProperties.PURPOSE_ENCRYPT or KeyProperties.PURPOSE_DECRYPT)
                     .setBlockModes(KeyProperties.BLOCK_MODE_GCM)
                     .setEncryptionPaddings(KeyProperties.ENCRYPTION_PADDING_NONE)
                     .setKeySize(256)

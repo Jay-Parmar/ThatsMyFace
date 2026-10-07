@@ -62,15 +62,15 @@ class PreparedFile internal constructor(internal val payload: Payload, private v
 
 @SuppressLint("MissingPermission")
 @MainThread
-class NearbyTransport(context: Context, private val scope: CoroutineScope) {
+class NearbyTransport(context: Context, private val scope: CoroutineScope) : NearbyLink {
     private val context = context.applicationContext
     private val client by lazy { Nearby.getConnectionsClient(this.context) }
     private val mutablePeers = MutableStateFlow<List<NearbyPeer>>(emptyList())
-    val peers: StateFlow<List<NearbyPeer>> = mutablePeers.asStateFlow()
+    override val peers: StateFlow<List<NearbyPeer>> = mutablePeers.asStateFlow()
     private val mutableEvents = MutableSharedFlow<TransportEvent>(extraBufferCapacity = 64)
-    val events: SharedFlow<TransportEvent> = mutableEvents.asSharedFlow()
+    override val events: SharedFlow<TransportEvent> = mutableEvents.asSharedFlow()
     private val mutableActive = MutableStateFlow(false)
-    val active: StateFlow<Boolean> = mutableActive.asStateFlow()
+    override val active: StateFlow<Boolean> = mutableActive.asStateFlow()
     private var eventId: String? = null
     private var nickname = ""
     private var generation = 0
@@ -82,7 +82,7 @@ class NearbyTransport(context: Context, private val scope: CoroutineScope) {
     private val outgoing = mutableMapOf<Long, PreparedFile>()
     private val payloadPeers = mutableMapOf<Long, String>()
 
-    suspend fun start(eventId: String, nickname: String) {
+    override suspend fun start(eventId: String, nickname: String) {
         WireCodec.requireId(eventId)
         require(nickname.isNotBlank() && nickname.length <= 40) { "Choose a nickname of 1 to 40 characters" }
         stop()
@@ -106,7 +106,7 @@ class NearbyTransport(context: Context, private val scope: CoroutineScope) {
         }
     }
 
-    fun stop() {
+    override fun stop() {
         generation++
         if (eventId != null) {
             client.stopAdvertising()
@@ -130,7 +130,7 @@ class NearbyTransport(context: Context, private val scope: CoroutineScope) {
         mutablePeers.value = emptyList()
     }
 
-    suspend fun connect(endpointId: String) {
+    override suspend fun connect(endpointId: String) {
         check(active.value && peer(endpointId)?.status == PeerStatus.DISCOVERED) { "Friend is no longer available. Search again" }
         updatePeer(endpointId) { it.copy(status = PeerStatus.CONNECTING) }
         try {
@@ -142,7 +142,7 @@ class NearbyTransport(context: Context, private val scope: CoroutineScope) {
         }
     }
 
-    suspend fun verify(endpointId: String) {
+    override suspend fun verify(endpointId: String) {
         val peer = peer(endpointId)
         check(peer?.status == PeerStatus.VERIFYING && !peer.authenticationDigits.isNullOrBlank()) { "Compare the code on both phones first" }
         accepted += endpointId
@@ -157,32 +157,32 @@ class NearbyTransport(context: Context, private val scope: CoroutineScope) {
         }
     }
 
-    fun reject(endpointId: String) {
+    override fun reject(endpointId: String) {
         client.rejectConnection(endpointId)
         clearPeer(endpointId)
     }
 
-    fun disconnect(endpointId: String) {
+    override fun disconnect(endpointId: String) {
         client.disconnectFromEndpoint(endpointId)
         clearPeer(endpointId)
     }
 
-    fun allowPeer(endpointId: String) {
+    override fun allowPeer(endpointId: String) {
         check(peer(endpointId)?.status == PeerStatus.CONNECTED && endpointId in accepted) { "Verify this friend first" }
         allowed += endpointId
         updatePeer(endpointId) { it.copy(status = PeerStatus.VERIFIED) }
     }
 
-    suspend fun sendMessage(endpointId: String, message: WireMessage) {
+    override suspend fun sendMessage(endpointId: String, message: WireMessage) {
         check(message.eventId == eventId) { "Wrong event" }
         requireConnection(endpointId, message is WireMessage.Hello)
         client.sendPayload(endpointId, Payload.fromBytes(WireCodec.encode(message))).awaitResult()
     }
 
-    fun prepareFile(file: File): PreparedFile = PreparedFile(Payload.fromFile(file), null)
-    fun prepareFile(descriptor: ParcelFileDescriptor): PreparedFile = PreparedFile(Payload.fromFile(descriptor), descriptor)
+    override fun prepareFile(file: File): PreparedFile = PreparedFile(Payload.fromFile(file), null)
+    override fun prepareFile(descriptor: ParcelFileDescriptor): PreparedFile = PreparedFile(Payload.fromFile(descriptor), descriptor)
 
-    suspend fun sendFile(endpointId: String, prepared: PreparedFile) {
+    override suspend fun sendFile(endpointId: String, prepared: PreparedFile) {
         requireConnection(endpointId)
         check(prepared.payloadId !in outgoing) { "Transfer already started" }
         outgoing[prepared.payloadId] = prepared
@@ -198,14 +198,14 @@ class NearbyTransport(context: Context, private val scope: CoroutineScope) {
         }
     }
 
-    fun expectFile(endpointId: String, payloadId: Long, byteCount: Long) {
+    override fun expectFile(endpointId: String, payloadId: Long, byteCount: Long) {
         requireConnection(endpointId)
         require(byteCount in 1..WireCodec.MAX_PHOTO_BYTES) { "Invalid file size" }
         check(expectedFiles.size < 16 && payloadId !in expectedFiles && payloadId !in outgoing) { "Too many pending files or duplicate payload" }
         expectedFiles[payloadId] = ExpectedFile(endpointId, byteCount)
     }
 
-    fun cancel(payloadId: Long) {
+    override fun cancel(payloadId: Long) {
         client.cancelPayload(payloadId)
         incoming.remove(payloadId)?.let(::removeReceivedFile)
         outgoing.remove(payloadId)?.let { runCatching { it.close() } }
@@ -275,7 +275,10 @@ class NearbyTransport(context: Context, private val scope: CoroutineScope) {
                     val expectation = expectedFiles[payload.id]
                     val fileSize = payload.asFile()?.size ?: -1L
                     if (endpointId !in allowed || expectation == null || expectation.endpointId != endpointId || fileSize > expectation.byteCount) {
-                        client.cancelPayload(payload.id)
+                        if (expectation != null && expectation.endpointId == endpointId && endpointId in allowed) {
+                            cancel(payload.id)
+                            emit(TransportEvent.Progress(endpointId, payload.id, 0, expectation.byteCount, PayloadStatus.FAILED))
+                        } else client.cancelPayload(payload.id)
                         removeReceivedFile(payload)
                         emit(TransportEvent.Error(endpointId, "An unrequested file was blocked"))
                         return
@@ -292,6 +295,7 @@ class NearbyTransport(context: Context, private val scope: CoroutineScope) {
             val expectation = expectedFiles[update.payloadId]
             if (expectation != null && (update.bytesTransferred > expectation.byteCount || update.totalBytes > expectation.byteCount)) {
                 cancel(update.payloadId)
+                emit(TransportEvent.Progress(endpointId, update.payloadId, update.bytesTransferred.coerceIn(0, expectation.byteCount), expectation.byteCount, PayloadStatus.FAILED))
                 emit(TransportEvent.Error(endpointId, "The received file exceeded its approved size"))
                 return
             }
@@ -307,7 +311,10 @@ class NearbyTransport(context: Context, private val scope: CoroutineScope) {
             if (status == PayloadStatus.SUCCESS && received != null) {
                 val uri = received.asFile()?.asUri()
                 if (uri != null) emit(TransportEvent.FileReceived(endpointId, update.payloadId, uri))
-                else emit(TransportEvent.Error(endpointId, "The received file could not be opened. Request it again"))
+                else {
+                    emit(TransportEvent.Progress(endpointId, update.payloadId, update.bytesTransferred, update.totalBytes, PayloadStatus.FAILED))
+                    emit(TransportEvent.Error(endpointId, "The received file could not be opened. Request it again"))
+                }
             } else if (received != null) removeReceivedFile(received)
             outgoing.remove(update.payloadId)?.let { runCatching { it.close() } }
             expectedFiles.remove(update.payloadId)
@@ -319,7 +326,8 @@ class NearbyTransport(context: Context, private val scope: CoroutineScope) {
         try {
             requireConnection(endpointId, allowHello = true)
             val message = WireCodec.decode(requireNotNull(payload.asBytes()), requireNotNull(eventId))
-            check(message is WireMessage.Hello || endpointId in allowed) { "Unverified event peer" }
+            check(message is WireMessage.Hello ||
+                (message is WireMessage.EventReady && endpointId in receivedHello) || endpointId in allowed) { "Unverified event peer" }
             if (message is WireMessage.Hello) check(receivedHello.add(endpointId)) { "Identity already announced" }
             emit(TransportEvent.Message(endpointId, message))
         } catch (_: Exception) {

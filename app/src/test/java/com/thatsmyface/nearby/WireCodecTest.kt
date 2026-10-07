@@ -17,6 +17,7 @@ class WireCodecTest {
     @Test fun validMessagesRoundTrip() {
         val messages = listOf(
             WireMessage.Hello(event, peer, "Friend", checksum),
+            WireMessage.EventReady(event),
             WireMessage.Catalog(event, listOf(offer())),
             WireMessage.Catalog(event, emptyList(), reset = true),
             WireMessage.FaceReferences(event, "sface", listOf(listOf(1f) + List(127) { 0f })),

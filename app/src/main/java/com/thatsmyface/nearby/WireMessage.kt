@@ -16,6 +16,9 @@ sealed class WireMessage {
     @Serializable @SerialName("hello")
     data class Hello(override val eventId: String, val peerId: String, val nickname: String, val proof: String) : WireMessage()
 
+    @Serializable @SerialName("event_ready")
+    data class EventReady(override val eventId: String) : WireMessage()
+
     @Serializable @SerialName("catalog")
     data class Catalog(override val eventId: String, val photos: List<PhotoOffer>, val reset: Boolean = false) : WireMessage()
 
@@ -100,6 +103,7 @@ object WireCodec {
                 requireText(message.nickname, 40, false)
                 require(digestPattern.matches(message.proof)) { "Invalid event proof" }
             }
+            is WireMessage.EventReady -> Unit
             is WireMessage.Catalog -> {
                 require(message.photos.size <= 20) { "Catalog page is too large" }
                 require(message.photos.map { it.photoId }.distinct().size == message.photos.size) { "Repeated photo ID" }
