@@ -1,0 +1,18 @@
+ThatsMyFace includes unmodified OpenCV Zoo models and the OpenCV runtime.
+
+SFace MobileFaceNet ONNX weights, December 2021:
+Copyright (C) 2021, Shenzhen Institute of Artificial Intelligence and Robotics
+for Society. All rights reserved. Third party copyrights are property of their
+respective owners. Contributed to OpenCV Zoo by Yaoyao Zhong; ONNX conversion
+credited to Chengrui Wang. Apache License 2.0, see SFace-APACHE-2.0.txt.
+
+YuNet ONNX weights, March 2023:
+Copyright (c) 2020 Shiqi Yu <shiqi.yu@gmail.com>.
+MIT License, see YuNet-MIT.txt.
+
+OpenCV 4.13.0 runtime:
+Apache License 2.0, see OpenCV-APACHE-2.0.txt and OpenCV-THIRD-PARTY.txt.
+
+Model source revision: 47534e27c9851bb1128ccc0102f1145e27f23f98
+https://github.com/opencv/opencv_zoo
+Model provenance and exact checksums are documented in docs/MODEL.md.
