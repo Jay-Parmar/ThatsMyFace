@@ -11,12 +11,13 @@
 - Real bundled YuNet/SFace detection, alignment, and embeddings execute on host, Android 16 emulator, and physical Android 16 phone.
 - Local persistence, original byte preservation, duplicate saves, revoked provider access, and cancelled save tested on emulator.
 - Final local build/lint, 64 JVM tests, 21 emulator tests, host inference, and normal/150% font UI checks passed.
+- Integrated GitHub build, model, and emulator jobs passed. The final APK installed and launched on the available physical phone, with working Nearby startup.
 
 ## Pending
-- Integrated GitHub CI and installation of the final APK on the available phone.
+- Physical acceptance and low-light recognition evaluation remain as listed below. No local implementation or automated-check task is pending.
 
 ## Blocked
 - Two-physical-phone acceptance requires a second available Android phone. One physical phone and one emulator are available.
 - Friend-group accuracy and all-night field testing require consenting participants.
 
-Implementation continues on `feat/core-sharing`, stacked on `feat/local-events`. This is not yet a completed, physically validated v1.
+Implementation is on `feat/core-sharing` in draft PR #2, stacked on `feat/local-events` in draft PR #1. This is not yet a completed, physically validated v1.
