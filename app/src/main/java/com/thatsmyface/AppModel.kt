@@ -307,6 +307,13 @@ class AppModel @JvmOverloads constructor(application: Application, val store: Lo
     fun revokePeer(peer: Peer) = runAction { sharing.revoke(peer.eventId, peer.peerId) }
     fun refreshFriends() { sharing.refreshAll() }
     fun requestPhoto(offer: PhotoOffer) = runAction { sharing.request(offer) }
+    fun checkSavedPhoto(transfer: Transfer, open: ((Uri) -> Unit)? = null) = runAction {
+        val checked = sharing.checkSavedCopy(transfer) ?: return@runAction
+        if (checked.availability == SavedCopyAvailability.AVAILABLE) {
+            if (open == null) notify("Your saved original is available and unchanged.")
+            else state.value.transfers.find { it.key == transfer.key && it.requestId == transfer.requestId }?.savedUri?.let { open(Uri.parse(it)) }
+        } else notify(checked.message ?: "This saved copy could not be checked.")
+    }
     fun decideMatch(offer: PhotoOffer, decision: MatchDecision) = runAction { sharing.decide(offer, decision) }
     fun approveTransfer(transfer: Transfer) = runAction { sharing.approve(transfer) }
     fun rejectTransfer(transfer: Transfer) = runAction { sharing.reject(transfer) }

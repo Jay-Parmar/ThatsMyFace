@@ -7,6 +7,8 @@ import com.thatsmyface.data.Profile
 import com.thatsmyface.data.Transfer
 import com.thatsmyface.data.TransferDirection
 import com.thatsmyface.data.TransferStatus
+import com.thatsmyface.data.SavedCopyAvailability
+import com.thatsmyface.data.SavedCopyCheck
 import com.thatsmyface.data.revokePeer
 import com.thatsmyface.nearby.PayloadStatus
 import com.thatsmyface.nearby.WireMessage
@@ -99,6 +101,38 @@ class SessionPolicyTest {
         val receive = send.copy(direction = TransferDirection.RECEIVE)
         val state = state(receive, receiver)
         assertEquals(state, SessionPolicy.beginAttempt(state, resend.copy(direction = TransferDirection.RECEIVE)))
+    }
+
+    @Test fun onlyAVerifiedMissingSavedCopyCanBeginAFreshReceiveAttempt() {
+        val completed = transfer().copy(direction = TransferDirection.RECEIVE, status = TransferStatus.COMPLETE,
+            savedUri = "content://saved/1")
+        val next = completed.copy(requestId = "fresh-request-123", status = TransferStatus.AWAITING_APPROVAL,
+            approved = false, payloadId = null, savedUri = null, savedCopyAvailability = SavedCopyAvailability.UNCHECKED)
+        SavedCopyAvailability.entries.forEach { availability ->
+            val state = state(completed.copy(savedCopyAvailability = availability), receiver)
+            val updated = SessionPolicy.beginAttempt(state, next)
+            if (availability == SavedCopyAvailability.MISSING) {
+                assertEquals(listOf(next), updated.transfers)
+                assertFalse(updated.transfers.single().approved)
+                assertEquals(updated, SessionPolicy.updateAttempt(updated, completed, completed.copy(status = TransferStatus.COMPLETE)))
+            } else assertEquals(state, updated)
+        }
+    }
+
+    @Test fun checkingALocalCopyKeepsCompletionHistoryAndCannotOverwriteAnotherAttempt() {
+        val completed = transfer().copy(direction = TransferDirection.RECEIVE, status = TransferStatus.COMPLETE,
+            savedUri = "content://saved/1")
+        val state = state(completed, receiver)
+        val missing = SavedCopyCheck(SavedCopyAvailability.MISSING, "Copy missing")
+        val updated = SessionPolicy.recordSavedCheck(state, completed, missing)
+        assertEquals(TransferStatus.COMPLETE, updated.transfers.single().status)
+        assertEquals(completed.requestId, updated.transfers.single().requestId)
+        assertEquals(completed.savedUri, updated.transfers.single().savedUri)
+        assertEquals(SavedCopyAvailability.MISSING, updated.transfers.single().savedCopyAvailability)
+        val next = state.copy(transfers = listOf(completed.copy(requestId = "fresh-request-123")))
+        assertEquals(next, SessionPolicy.recordSavedCheck(next, completed, missing))
+        assertEquals(state, SessionPolicy.recordSavedCheck(state, completed.copy(savedUri = "content://saved/2"), missing))
+        assertEquals(AppState(), SessionPolicy.recordSavedCheck(AppState(), completed, missing))
     }
 
     @Test fun receiptMustMatchApprovedEventPhotoRequestAndChecksum() {

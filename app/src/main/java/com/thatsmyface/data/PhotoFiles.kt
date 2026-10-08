@@ -189,6 +189,32 @@ class PhotoFiles(private val context: Context) {
         }
     }
 
+    suspend fun checkSavedCopy(transfer: Transfer): SavedCopyCheck = withContext(Dispatchers.IO) {
+        require(transfer.direction == TransferDirection.RECEIVE && transfer.status == TransferStatus.COMPLETE)
+        val unavailable = SavedCopyCheck(SavedCopyAvailability.UNREADABLE,
+            "The saved copy could not be checked. Restore photo access or reconnect storage, then check again.")
+        val uri = transfer.savedUri?.let(Uri::parse) ?: return@withContext unavailable
+        try {
+            requireContentUri(uri)
+            val exists = resolver.query(uri, arrayOf(MediaStore.MediaColumns._ID), null, null, null)?.use { it.moveToFirst() }
+                ?: return@withContext unavailable
+            if (!exists) return@withContext SavedCopyCheck(SavedCopyAvailability.MISSING,
+                "The saved copy is missing. You can request the original again with your friend's approval.")
+            val actual = open(uri).use { digest(it) }
+            if (actual.sha256 == transfer.sha256 && actual.size == transfer.size) SavedCopyCheck(SavedCopyAvailability.AVAILABLE)
+            else SavedCopyCheck(SavedCopyAvailability.CHANGED,
+                "This saved copy changed. Keep it safe. Restore or remove it yourself, then check again before requesting the original.")
+        } catch (_: SecurityException) {
+            unavailable
+        } catch (_: PhotoAccessException) {
+            unavailable
+        } catch (_: java.io.IOException) {
+            unavailable
+        } catch (_: IllegalArgumentException) {
+            unavailable
+        }
+    }
+
     suspend fun releasePermissions() = withContext(Dispatchers.IO) {
         resolver.persistedUriPermissions.forEach {
             runCatching { resolver.releasePersistableUriPermission(it.uri, Intent.FLAG_GRANT_READ_URI_PERMISSION) }

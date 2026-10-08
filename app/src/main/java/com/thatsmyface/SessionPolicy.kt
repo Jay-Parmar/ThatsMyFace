@@ -4,6 +4,8 @@ import com.thatsmyface.data.AppState
 import com.thatsmyface.data.Transfer
 import com.thatsmyface.data.TransferDirection
 import com.thatsmyface.data.TransferStatus
+import com.thatsmyface.data.SavedCopyAvailability
+import com.thatsmyface.data.SavedCopyCheck
 import com.thatsmyface.data.isApprovedPeer
 import com.thatsmyface.data.upsertTransfer
 import com.thatsmyface.nearby.PayloadStatus
@@ -33,7 +35,8 @@ internal object SessionPolicy {
         if (!ownsAttempt(state, transfer)) return state
         val existing = state.transfers.find { it.key == transfer.key }
         if (existing?.requestId == transfer.requestId || existing?.status in setOf(TransferStatus.QUEUED, TransferStatus.TRANSFERRING)) return state
-        if (existing?.status == TransferStatus.COMPLETE && transfer.direction == TransferDirection.RECEIVE) return state
+        if (existing?.status == TransferStatus.COMPLETE && transfer.direction == TransferDirection.RECEIVE &&
+            existing.savedCopyAvailability != SavedCopyAvailability.MISSING) return state
         if (state.transfers.any { it.eventId == transfer.eventId && it.requestId == transfer.requestId && it.key != transfer.key }) return state
         return state.copy(transfers = state.transfers.filterNot { it.key == transfer.key } + transfer)
     }
@@ -60,7 +63,17 @@ internal object SessionPolicy {
         // A copy published just before cancellation is already downloaded and must not be saved twice.
         return state.copy(transfers = state.transfers.map {
             if (it.key == expected.key) it.copy(status = TransferStatus.COMPLETE, savedUri = savedUri,
-                bytesTransferred = expected.size, error = null) else it
+                bytesTransferred = expected.size, error = null, savedCopyAvailability = SavedCopyAvailability.AVAILABLE) else it
+        })
+    }
+
+    fun recordSavedCheck(state: AppState, expected: Transfer, result: SavedCopyCheck): AppState {
+        val current = state.transfers.find { it.key == expected.key } ?: return state
+        if (state.profile?.id != expected.receiverId || current.direction != TransferDirection.RECEIVE ||
+            current.status != TransferStatus.COMPLETE || !sameAttempt(current, expected) ||
+            current.savedUri != expected.savedUri || current.sha256 != expected.sha256 || current.size != expected.size) return state
+        return state.copy(transfers = state.transfers.map {
+            if (it.key == current.key) it.copy(savedCopyAvailability = result.availability, error = result.message) else it
         })
     }
 

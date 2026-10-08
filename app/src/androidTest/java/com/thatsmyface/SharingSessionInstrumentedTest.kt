@@ -15,6 +15,7 @@ import com.thatsmyface.data.PhotoFiles
 import com.thatsmyface.data.Profile
 import com.thatsmyface.data.Transfer
 import com.thatsmyface.data.TransferStatus
+import com.thatsmyface.data.SavedCopyAvailability
 import com.thatsmyface.data.newId
 import com.thatsmyface.nearby.NearbyLink
 import com.thatsmyface.nearby.NearbyPeer
@@ -65,6 +66,70 @@ class SharingSessionInstrumentedTest {
             assertEquals(saved, restored.state.value.transfers.single().savedUri)
             assertEquals(TransferStatus.COMPLETE, restored.state.value.transfers.single().status)
         } finally { fixture.close() }
+    }
+
+    @Test fun deletedSavedOriginalNeedsFreshOwnerApprovalAndSavesOnlyOneReplacement() = runBlocking {
+        val fixture = Fixture()
+        try {
+            fixture.initialize()
+            fixture.pair()
+            fixture.request()
+            withContext(Dispatchers.Main) { fixture.owner.approve(fixture.ownerTransfer()) }
+            fixture.await { fixture.receiverTransfer()?.status == TransferStatus.COMPLETE && fixture.ownerTransfer().status == TransferStatus.COMPLETE }
+            val completed = requireNotNull(fixture.receiverTransfer())
+            fixture.context.contentResolver.delete(Uri.parse(completed.savedUri), null, null)
+            withContext(Dispatchers.Main) { fixture.receiver.checkSavedCopy(completed) }
+            assertEquals(TransferStatus.COMPLETE, fixture.receiverTransfer()?.status)
+            assertEquals(SavedCopyAvailability.MISSING, fixture.receiverTransfer()?.savedCopyAvailability)
+            assertEquals(TransferStatus.COMPLETE, fixture.ownerTransfer().status)
+
+            withContext(Dispatchers.Main) { fixture.receiver.retry(requireNotNull(fixture.receiverTransfer())) }
+            fixture.await { fixture.ownerTransfer().status == TransferStatus.AWAITING_APPROVAL }
+            assertNotEquals(completed.requestId, fixture.ownerTransfer().requestId)
+            assertFalse(fixture.ownerTransfer().approved)
+            assertEquals(1, fixture.ownerLink.filesSent)
+            withContext(Dispatchers.Main) { fixture.owner.approve(fixture.ownerTransfer()) }
+            fixture.await { fixture.receiverTransfer()?.status == TransferStatus.COMPLETE && fixture.ownerTransfer().status == TransferStatus.COMPLETE }
+            val replacement = requireNotNull(fixture.receiverTransfer())
+            assertEquals(SavedCopyAvailability.AVAILABLE, replacement.savedCopyAvailability)
+            assertArrayEquals(fixture.original, fixture.read(Uri.parse(replacement.savedUri)))
+            assertArrayEquals(fixture.original, fixture.read(fixture.source))
+            withContext(Dispatchers.Main) { fixture.receiver.retry(replacement) }
+            assertEquals(2, fixture.ownerLink.filesSent)
+            val collection = MediaStore.Images.Media.getContentUri(MediaStore.VOLUME_EXTERNAL_PRIMARY)
+            fixture.context.contentResolver.query(collection, arrayOf(MediaStore.Images.Media._ID),
+                "${MediaStore.Images.Media.DISPLAY_NAME} LIKE ?", arrayOf("TMF_${replacement.key}_%"), null)!!.use {
+                assertEquals(1, it.count)
+            }
+        } finally { fixture.close() }
+    }
+
+    @Test fun restoredOrUnreadableSavedCopyDoesNotCreateAnotherRequest() = runBlocking {
+        val fixture = Fixture()
+        var savedUri: String? = null
+        try {
+            fixture.initialize()
+            fixture.pair()
+            fixture.request()
+            withContext(Dispatchers.Main) { fixture.owner.approve(fixture.ownerTransfer()) }
+            fixture.await { fixture.receiverTransfer()?.status == TransferStatus.COMPLETE && fixture.ownerTransfer().status == TransferStatus.COMPLETE }
+            val completed = requireNotNull(fixture.receiverTransfer())
+            savedUri = completed.savedUri
+            fixture.receiverStore.update { it.copy(transfers = listOf(completed.copy(savedCopyAvailability = SavedCopyAvailability.MISSING))) }
+            withContext(Dispatchers.Main) { fixture.receiver.retry(completed) }
+            assertEquals(SavedCopyAvailability.AVAILABLE, fixture.receiverTransfer()?.savedCopyAvailability)
+            assertEquals(completed.requestId, fixture.receiverTransfer()?.requestId)
+            assertEquals(1, fixture.ownerLink.filesSent)
+            fixture.receiverStore.update { it.copy(transfers = listOf(completed.copy(savedUri = "content://com.thatsmyface.test.storagefixture/revoked"))) }
+            withContext(Dispatchers.Main) { fixture.receiver.retry(requireNotNull(fixture.receiverTransfer())) }
+            assertEquals(SavedCopyAvailability.UNREADABLE, fixture.receiverTransfer()?.savedCopyAvailability)
+            assertEquals(TransferStatus.COMPLETE, fixture.receiverTransfer()?.status)
+            assertEquals(completed.requestId, fixture.receiverTransfer()?.requestId)
+            assertEquals(1, fixture.ownerLink.filesSent)
+        } finally {
+            savedUri?.let { uri -> fixture.receiverStore.update { it.copy(transfers = it.transfers.map { transfer -> transfer.copy(savedUri = uri) }) } }
+            fixture.close()
+        }
     }
 
     @Test fun eventReadyWaitsForBothPeersBeforePrivateCatalogs() = runBlocking {

@@ -105,6 +105,42 @@ class StorageInstrumentedTest {
         assertFalse(state.canAccessPhoto("event", "friend", photo.id))
     }
 
+    @Test fun savedCopyChecksDistinguishMissingChangedAndDeniedWithoutDeletingExistingBytes() = runBlocking {
+        val files = PhotoFiles(context)
+        val source = createSyntheticPhoto()
+        var received: Uri? = null
+        var temporary: File? = null
+        try {
+            val photo = files.importPhoto("saved-copy-event", source, persistPermission = false)
+            temporary = files.outgoingSnapshot(photo)
+            val transfer = Transfer(photo.eventId, "sender", photo.id, "receiver", direction = TransferDirection.RECEIVE,
+                status = TransferStatus.COMPLETE, displayName = photo.displayName, mimeType = photo.mimeType,
+                size = photo.size, sha256 = photo.sha256)
+            received = files.saveReceived(temporary, transfer)
+            val completed = transfer.copy(savedUri = received.toString())
+            assertEquals(SavedCopyAvailability.AVAILABLE, files.checkSavedCopy(completed).availability)
+            val changed = byteArrayOf(1, 2, 3, 4)
+            context.contentResolver.openOutputStream(received, "wt")!!.use { it.write(changed) }
+            assertEquals(SavedCopyAvailability.CHANGED, files.checkSavedCopy(completed).availability)
+            try {
+                files.saveReceived(temporary, transfer)
+                fail("A changed saved copy must not be overwritten")
+            } catch (_: IllegalStateException) {
+                assertArrayEquals(changed, context.contentResolver.openInputStream(received)!!.use { it.readBytes() })
+            }
+            context.contentResolver.delete(received, null, null)
+            received = null
+            assertEquals(SavedCopyAvailability.MISSING, files.checkSavedCopy(completed).availability)
+            val denied = completed.copy(savedUri = "content://com.thatsmyface.test.storagefixture/revoked")
+            assertEquals(SavedCopyAvailability.UNREADABLE, files.checkSavedCopy(denied).availability)
+            assertEquals(PhotoAvailability.AVAILABLE, files.checkAvailability(photo).availability)
+        } finally {
+            context.contentResolver.delete(source, null, null)
+            received?.let { context.contentResolver.delete(it, null, null) }
+            temporary?.delete()
+        }
+    }
+
     @Test fun cancellationBeforePublicationRemovesOnlyThePendingCopy() = runBlocking {
         val files = PhotoFiles(context)
         val source = createSyntheticPhoto()

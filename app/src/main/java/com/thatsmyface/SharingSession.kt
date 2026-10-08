@@ -14,6 +14,8 @@ import com.thatsmyface.data.PhotoOffer
 import com.thatsmyface.data.Transfer
 import com.thatsmyface.data.TransferDirection
 import com.thatsmyface.data.TransferStatus
+import com.thatsmyface.data.SavedCopyAvailability
+import com.thatsmyface.data.SavedCopyCheck
 import com.thatsmyface.data.canAccessPhoto
 import com.thatsmyface.data.canSendOriginal
 import com.thatsmyface.data.decideMatch
@@ -324,7 +326,13 @@ class SharingSession(
         val me = requireNotNull(current.profile).id
         check(current.isApprovedPeer(offer.eventId, offer.ownerId)) { "This friend no longer has event access." }
         val existing = current.transfers.find { it.key == transferKey(offer.eventId, offer.ownerId, offer.photoId, me) }
-        if (existing?.status == TransferStatus.COMPLETE) { notify("This original is already saved."); return }
+        if (existing?.status == TransferStatus.COMPLETE) {
+            val checked = checkSavedCopy(existing) ?: return
+            if (checked.availability != SavedCopyAvailability.MISSING) {
+                notify(checked.message ?: "This original is already saved and readable.")
+                return
+            }
+        }
         if (existing?.status in setOf(TransferStatus.AWAITING_APPROVAL, TransferStatus.QUEUED, TransferStatus.TRANSFERRING)) {
             notify("This request is already in progress. Cancel it before requesting again."); return
         }
@@ -341,6 +349,18 @@ class SharingSession(
                 changeTransfer(transfer, transfer.copy(status = TransferStatus.WAITING, error = "Friend is offline. Reconnect and retry."))
                 throw error
             }
+        }
+    }
+
+    suspend fun checkSavedCopy(transfer: Transfer): SavedCopyCheck? {
+        val latest = current.transfers.find { it.key == transfer.key && it.requestId == transfer.requestId } ?: return null
+        if (latest.direction != TransferDirection.RECEIVE || latest.status != TransferStatus.COMPLETE ||
+            current.profile?.id != latest.receiverId) return null
+        val checked = files.checkSavedCopy(latest)
+        store.update { SessionPolicy.recordSavedCheck(it, latest, checked) }
+        return checked.takeIf {
+            val updated = current.transfers.find { entry -> entry.key == latest.key }
+            SessionPolicy.sameAttempt(updated, latest) && updated?.savedUri == latest.savedUri
         }
     }
 

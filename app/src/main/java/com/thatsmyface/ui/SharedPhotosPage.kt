@@ -1,7 +1,7 @@
 package com.thatsmyface.ui
 
 import android.content.Intent
-import android.net.Uri
+import android.content.ActivityNotFoundException
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Arrangement
@@ -47,6 +47,7 @@ import com.thatsmyface.data.PhotoOffer
 import com.thatsmyface.data.Transfer
 import com.thatsmyface.data.TransferDirection
 import com.thatsmyface.data.TransferStatus
+import com.thatsmyface.data.SavedCopyAvailability
 
 @Composable
 @OptIn(ExperimentalLayoutApi::class)
@@ -108,17 +109,21 @@ private fun FoundPhotos(model: AppModel, state: AppState, event: Event, busy: Bo
                     Text("This is the last shared preview. The owner must be connected to supply an original.", style = MaterialTheme.typography.bodySmall)
                     val download = state.transfers.find { it.eventId == event.id && it.ownerId == offer.ownerId &&
                         it.photoId == offer.photoId && it.direction == TransferDirection.RECEIVE }
-                    Button(onClick = { model.requestPhoto(offer) }, enabled = !busy && (download == null || download.status in
-                        setOf(TransferStatus.FAILED, TransferStatus.CANCELLED, TransferStatus.REJECTED, TransferStatus.WAITING)),
+                    Button(onClick = {
+                        if (download?.status == TransferStatus.COMPLETE && download.savedCopyAvailability != SavedCopyAvailability.MISSING) model.checkSavedPhoto(download)
+                        else model.requestPhoto(offer)
+                    }, enabled = !busy && (download == null || download.status in
+                        setOf(TransferStatus.FAILED, TransferStatus.CANCELLED, TransferStatus.REJECTED, TransferStatus.WAITING, TransferStatus.COMPLETE)),
                         modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp)) {
                         Text(when (download?.status) {
-                            TransferStatus.COMPLETE -> "Original saved"
+                            TransferStatus.COMPLETE -> if (download.savedCopyAvailability == SavedCopyAvailability.MISSING) "Request original again" else "Check saved copy"
                             TransferStatus.AWAITING_APPROVAL -> "Awaiting owner approval"
                             TransferStatus.QUEUED, TransferStatus.TRANSFERRING -> "Download in progress"
                             TransferStatus.WAITING -> "Retry when friend is nearby"
                             else -> "Request original"
                         })
                     }
+                    if (download?.status == TransferStatus.COMPLETE) download.error?.let { Text(it, style = MaterialTheme.typography.bodySmall) }
                 } else Text("You already have this original.", style = MaterialTheme.typography.bodySmall)
             }
         }
@@ -155,7 +160,13 @@ private fun TransferCard(model: AppModel, state: AppState, transfer: Transfer, b
         TransferStatus.AWAITING_APPROVAL -> if (sending) "Your approval is needed" else "Awaiting owner approval"
         TransferStatus.QUEUED -> "Queued"
         TransferStatus.TRANSFERRING -> if (sending) "Sending original" else "Downloading original"
-        TransferStatus.COMPLETE -> if (sending) "Original delivered" else "Original saved"
+        TransferStatus.COMPLETE -> if (sending) "Original delivered" else when (transfer.savedCopyAvailability) {
+            SavedCopyAvailability.UNCHECKED -> "Original saved earlier; copy not checked"
+            SavedCopyAvailability.AVAILABLE -> "Saved original checked"
+            SavedCopyAvailability.MISSING -> "Saved copy is missing"
+            SavedCopyAvailability.UNREADABLE -> "Saved copy could not be checked"
+            SavedCopyAvailability.CHANGED -> "Saved copy changed"
+        }
         TransferStatus.FAILED -> "Transfer failed"
         TransferStatus.REJECTED -> "Request declined"
         TransferStatus.CANCELLED -> "Cancelled"
@@ -187,13 +198,24 @@ private fun TransferCard(model: AppModel, state: AppState, transfer: Transfer, b
             TextButton(onClick = { model.cancelTransfer(transfer) }, enabled = !busy,
                 modifier = Modifier.heightIn(min = 48.dp)) { Text("Cancel request") }
         }
-        if (transfer.status == TransferStatus.COMPLETE && !sending && transfer.savedUri != null) {
-            Button(onClick = {
-                try {
-                    context.startActivity(Intent(Intent.ACTION_VIEW).setDataAndType(Uri.parse(transfer.savedUri), transfer.mimeType)
-                        .addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION))
-                } catch (_: Exception) { model.notify("No photo viewer is available. Open Pictures/ThatsMyFace in your gallery.") }
-            }, modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp)) { Text("Open saved photo") }
+        if (transfer.status == TransferStatus.COMPLETE && !sending) {
+            OutlinedButton(onClick = { model.checkSavedPhoto(transfer) }, enabled = !busy,
+                modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp)) { Text("Check saved copy") }
+            if (transfer.savedCopyAvailability == SavedCopyAvailability.MISSING) {
+                Button(onClick = { model.retryTransfer(transfer) }, enabled = !busy,
+                    modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp)) { Text("Request original again") }
+            }
+            if (transfer.savedUri != null && transfer.savedCopyAvailability in setOf(SavedCopyAvailability.AVAILABLE, SavedCopyAvailability.UNCHECKED)) {
+                Button(onClick = {
+                    model.checkSavedPhoto(transfer) { uri ->
+                        try {
+                            context.startActivity(Intent(Intent.ACTION_VIEW).setDataAndType(uri, transfer.mimeType)
+                                .addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION))
+                        } catch (_: ActivityNotFoundException) { model.notify("No photo viewer is available. Open Pictures/ThatsMyFace in your gallery.") }
+                        catch (_: SecurityException) { model.notify("The viewer could not access this copy. Check photo access and try again.") }
+                    }
+                }, enabled = !busy, modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp)) { Text("Open saved photo") }
+            }
         }
     }
 }

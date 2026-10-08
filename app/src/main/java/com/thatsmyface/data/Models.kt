@@ -90,6 +90,11 @@ enum class TransferStatus {
 }
 
 @Serializable
+enum class SavedCopyAvailability { UNCHECKED, AVAILABLE, MISSING, UNREADABLE, CHANGED }
+
+data class SavedCopyCheck(val availability: SavedCopyAvailability, val message: String? = null)
+
+@Serializable
 data class Transfer(
     val eventId: String,
     val ownerId: String,
@@ -107,6 +112,7 @@ data class Transfer(
     val bytesTransferred: Long = 0,
     val error: String? = null,
     val approved: Boolean = false,
+    val savedCopyAvailability: SavedCopyAvailability = SavedCopyAvailability.UNCHECKED,
 ) {
     val key: String get() = transferKey(eventId, ownerId, photoId, receiverId)
 }
