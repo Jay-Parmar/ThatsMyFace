@@ -14,6 +14,7 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.sizeIn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.MaterialTheme
@@ -31,6 +32,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 import com.google.zxing.BarcodeFormat
 import com.google.zxing.BinaryBitmap
@@ -91,7 +93,8 @@ internal fun EventsPage(model: AppModel, state: AppState, selected: Event?, busy
             OutlinedButton(onClick = { qrPicker.launch(arrayOf("image/*")) }, enabled = !busy && !decoding,
                 modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp)) { Text(if (decoding) "Reading QR image" else "Choose QR image") }
             OutlinedTextField(invitation, { invitation = it.take(2048) }, label = { Text("Or paste invitation") },
-                modifier = Modifier.fillMaxWidth(), maxLines = 3, enabled = !busy)
+                modifier = Modifier.fillMaxWidth(), maxLines = 3, enabled = !busy,
+                keyboardOptions = KeyboardOptions(autoCorrectEnabled = false, keyboardType = KeyboardType.Uri))
             OutlinedButton(onClick = { model.joinEvent(invitation) }, enabled = invitation.isNotBlank() && !busy,
                 modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp)) { Text("Join event") }
         } }
