@@ -23,6 +23,8 @@ A catalog refresh starts with `Catalog(reset = true)` to discard stale offers, i
 
 The adapter rejects unrequested files, cancels files exceeding the approved size, and releases transfer state when disconnected. Application persistence owns approval, retries, integrity checks, and duplicate prevention. SDK success means delivery only, not verified application completion. Received temporary files use the SDK-provided content URI. Cleanup never targets a selected source URI. Partial retries restart the original transfer; there is no claim of byte-range continuation.
 
+Checking a saved copy verifies its current size and SHA-256 without downloading again. A confirmed missing copy can be requested again with fresh owner approval. Changed or unreadable copies block another download: keep changed files safe and restore or remove them yourself, or restore access to unreadable storage, then check again. The app does not overwrite or delete these copies automatically.
+
 Google documents FILE receive staging in Downloads. The app removes staging URIs after successful import or cancellation, but a sudden process exit can leave a temporary SDK file. Check Downloads after a forced-stop test. The app does not promise that SDK staging is private app storage or encrypted at rest.
 
 ## Platform and privacy limits
@@ -31,7 +33,11 @@ The pinned dependency is `com.google.android.gms:play-services-nearby:19.3.0`. V
 
 Permission requests are feature-specific. Android 10 through 12L needs location permissions for nearby discovery; Android 12 and newer also needs Bluetooth permissions; Android 13 and newer needs nearby Wi-Fi permission. Selected source files use granted Android content URIs. Android 17 adds local-network permission requirements when targeting API 37 or newer; this app targets 36 and needs a new permission review before increasing that target. Turn Bluetooth and Wi-Fi on manually; the app does not depend on the SDK enabling radios.
 
-The adapter has automated protocol tests. Paired-session instrumentation exercises actual encrypted stores, approval state, MediaStore copies, retries, and corruption handling with a test-only transport boundary. Actual offline pairing, file URI behavior across vendors, throughput, and two-phone interruption recovery require the real-device checklist. These tests do not establish physical nearby interoperability.
+Protocol tests and paired-session instrumentation exercise encrypted stores, approval, MediaStore copies, retries, and corruption handling with a test-only transport boundary.
+
+Separate production Nearby SDK checks on two API 36 emulators passed verified pairing, opt-in reference exchange, source-side recognition, declined and approved originals, exact byte integrity, missing-copy recovery, persisted waiting state, and reconnect/retry. See [validation](VALIDATION.md) for versions and evidence.
+
+These real SDK results use virtual networking and do not establish physical nearby interoperability or offline behavior. Pairing without internet, file URI behavior across vendors, throughput, and physical interruption recovery remain on the real-device checklist.
 
 The manifest declarations for the app's minSdk 29 and targetSdk 36 are:
 

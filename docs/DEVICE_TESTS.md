@@ -11,9 +11,11 @@ Use two consenting adults, two Android 10+ phones with compatible Google Play se
 - [ ] Reject and cancel requests. Attempt a different event and a removed peer. Verify access stays denied and no cancelled transfer becomes complete on a late message.
 - [ ] Switch off or disconnect the source phone mid-transfer. Verify waiting/failed state and no fake completed download. Reconnect, verify again, and retry.
 - [ ] Relaunch either app mid-transfer. Retry twice and confirm only one saved copy. Interrupt immediately after saving but before receipt to check duplicate prevention.
+- [ ] Check an intact received copy and confirm exactly one saved file remains. Delete only that copy through Android's media controls, check again, and verify a replacement needs fresh owner approval and matches the original bytes. The source must remain unchanged.
+- [ ] Change a received test copy, then check it. Verify the app preserves it and blocks another download until you restore or remove it. Make a received copy unreadable, verify no duplicate is saved, restore access, and check again.
 - [ ] Revoke photo/folder permissions or move/delete a source file. Check actionable errors and reselect the file. Ensure stale previews are removed on refresh and no original is supplied.
 - [ ] Disable reference sharing, delete face data, remove a friend, and delete local app data. Verify future transfers stop and source/downloaded files remain. Inspect Downloads for orphaned Nearby staging files after forced termination.
 - [ ] After setup, disable internet while retaining local Wi-Fi and Bluetooth. Test pairing, matching, and approved originals. This checks offline capability, not absence of SDK/system diagnostic traffic.
 - [ ] Try TalkBack, larger font size, landscape, denied camera permission with QR image/text fallback, low storage, and a phone without compatible Google Play services.
 
-One phone plus an emulator does not count as this two-physical-phone acceptance test. Automated model fixtures establish execution, not real-world recognition accuracy.
+One phone plus an emulator, or two emulators using the real Nearby SDK, does not count as this two-physical-phone acceptance test. Automated model fixtures establish execution, not real-world recognition accuracy.
