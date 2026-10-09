@@ -1,5 +1,6 @@
 package com.thatsmyface.data
 
+import android.Manifest
 import android.content.ContentValues
 import android.content.Context
 import android.content.Intent
@@ -9,10 +10,12 @@ import android.graphics.ColorSpace
 import android.graphics.ImageDecoder
 import android.net.Uri
 import android.os.Build
+import android.os.Bundle
 import android.provider.DocumentsContract
 import android.provider.MediaStore
 import android.provider.OpenableColumns
 import android.util.Base64
+import androidx.core.content.PermissionChecker
 import java.io.ByteArrayOutputStream
 import java.io.File
 import java.io.FileNotFoundException
@@ -35,7 +38,10 @@ class PhotoFiles(private val context: Context) {
             protectAccess {
                 requireContentUri(uri)
                 if (persistPermission) persistReadPermission(uri)
-                val mime = resolver.getType(uri)?.lowercase()
+                val mime = when (val reported = resolver.getType(uri)?.lowercase()) {
+                    "image/jpg" -> "image/jpeg"
+                    else -> reported
+                }
                 require(mime in IMAGE_EXTENSIONS) { "Choose a JPEG, PNG, WebP, HEIC, HEIF, or AVIF photo." }
                 verifyImage { open(uri) }
                 val digest = open(uri).use { digest(it) }
@@ -115,7 +121,8 @@ class PhotoFiles(private val context: Context) {
     suspend fun thumbnail(photo: Photo): String? = withContext(Dispatchers.IO) {
         protectAccess {
             val uri = Uri.parse(photo.uri)
-            val bitmap = ImageDecoder.decodeBitmap(ImageDecoder.createSource(resolver, originalUri(uri))) { decoder, info, _ ->
+            requireContentUri(uri)
+            val bitmap = ImageDecoder.decodeBitmap(ImageDecoder.createSource(resolver, uri)) { decoder, info, _ ->
                 val width = info.size.width
                 val height = info.size.height
                 require(width > 0 && height > 0 && width.toLong() * height <= 120_000_000)
@@ -227,21 +234,59 @@ class PhotoFiles(private val context: Context) {
 
     private fun open(uri: Uri): InputStream {
         return try {
-            resolver.openInputStream(originalUri(uri)) ?: throw FileNotFoundException()
+            val media = mediaUri(uri)
+            if (media == null) resolver.openInputStream(uri) ?: throw FileNotFoundException()
+            else try {
+                openMedia(MediaStore.setRequireOriginal(media))
+            } catch (error: SecurityException) {
+                // Exact document grants do not cover the query added by setRequireOriginal.
+                if (!isRegularMediaRow(media)) throw error
+                requireOriginalMetadataAccess()
+                val input = openMedia(media)
+                try {
+                    requireOriginalMetadataAccess()
+                    input
+                } catch (failure: Exception) {
+                    input.close()
+                    throw failure
+                }
+            }
         } catch (_: UnsupportedOperationException) {
             throw originalMetadataError()
         }
     }
 
-    private fun originalUri(uri: Uri): Uri {
+    private fun openMedia(uri: Uri): InputStream {
+        val options = Bundle().apply {
+            if (Build.VERSION.SDK_INT >= 31) putBoolean(MediaStore.EXTRA_ACCEPT_ORIGINAL_MEDIA_FORMAT, true)
+        }
+        val descriptor = resolver.openTypedAssetFileDescriptor(uri, "*/*", options) ?: throw FileNotFoundException()
+        return try { descriptor.createInputStream() }
+        catch (error: Exception) { descriptor.close(); throw error }
+    }
+
+    private fun requireOriginalMetadataAccess() {
+        if (PermissionChecker.checkSelfPermission(context, Manifest.permission.ACCESS_MEDIA_LOCATION) != PermissionChecker.PERMISSION_GRANTED) {
+            throw originalMetadataError()
+        }
+    }
+
+    private fun isRegularMediaRow(uri: Uri): Boolean {
+        val path = uri.pathSegments
+        val collection = path.drop(1).dropLast(1)
+        return uri.authority == MediaStore.AUTHORITY && uri.query == null && uri.fragment == null &&
+            path.lastOrNull()?.toLongOrNull() != null &&
+            (collection == listOf("images", "media") || collection == listOf("file"))
+    }
+
+    private fun mediaUri(uri: Uri): Uri? {
         requireContentUri(uri)
-        val mediaUri = when {
+        return when {
             uri.authority == MediaStore.AUTHORITY -> uri
             uri.authority == "com.android.providers.media.documents" -> MediaStore.getMediaUri(context, uri)
             Build.VERSION.SDK_INT >= 31 && uri.authority == "com.android.externalstorage.documents" -> MediaStore.getMediaUri(context, uri)
             else -> null
         }
-        return mediaUri?.let(MediaStore::setRequireOriginal) ?: uri
     }
 
     private fun originalMetadataError() = PhotoAccessException(PhotoAvailability.PERMISSION_REVOKED,
