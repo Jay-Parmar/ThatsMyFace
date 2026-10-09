@@ -27,7 +27,11 @@ def main():
             assert aligned.shape == (112, 112, 3)
             feature = recognizer.feature(aligned)
             assert feature.shape == (1, 128) and np.isfinite(feature).all()
-            results.append(feature)
+            norm = np.linalg.norm(feature)
+            assert norm > 1e-6
+            normalized = feature / norm
+            assert np.isclose(np.linalg.norm(normalized), 1.0, atol=1e-6)
+            results.append(normalized)
         return results
 
     portrait = cv2.imread(str(fixture))
@@ -40,8 +44,15 @@ def main():
     assert recognizer.match(original[0], transformed[0], cv2.FaceRecognizerSF_FR_COSINE) > .9
     assert len(extract(np.concatenate([portrait, portrait], axis=1))) == 2
     assert extract(np.zeros((320, 320, 3), dtype=np.uint8)) == []
+    for altered in (
+        cv2.resize(portrait, (256, 256), interpolation=cv2.INTER_LINEAR),
+        (portrait.astype(np.float32) * .2).astype(np.uint8),
+        cv2.GaussianBlur(portrait, (21, 21), 5),
+    ):
+        assert len(extract(altered)) == 1
     print("PASS: model checksums, detection, five-landmark alignment, 128-value inference, "
-          "same-person JPEG match, two faces, and no-face image.")
+          "normalization, same-person JPEG match, two faces, no-face image, and inference "
+          "on small, dark, and blurred fixtures. Android tests check the quality decisions.")
 
 
 if __name__ == "__main__":
