@@ -108,6 +108,7 @@ class SelectedDocumentInstrumentedTest {
         private var media: Uri? = null
         private var mapped: Uri? = null
         private var pickerHost: Activity? = null
+        private var lastTouch = "none"
 
         suspend fun initialize() {
             automation.serviceInfo = automation.serviceInfo.apply { flags = flags or AccessibilityServiceInfo.FLAG_REPORT_VIEW_IDS }
@@ -203,102 +204,103 @@ class SelectedDocumentInstrumentedTest {
                         DocumentsContract.buildRootUri("com.android.providers.media.documents", "images_root"))
                 }, 4107)
             }
-            var rootSeen = false
-            var folderSeen = false
-            var folderOpened = false
-            var fixtureSeen = false
-            var fixtureClicked = false
-            var rootsOpened = false
-            var imagesOpened = false
-            var activePackage = "none"
-            var matchCount = 0
-            var exactMatchCount = 0
-            val controlsSeen = mutableSetOf<String>()
+            val navigation = awaitPickerNode("locating the roots drawer") { root ->
+                visibleResource(root, "roots_list")
+                    ?: root.findAccessibilityNodeInfosByText("Show roots").firstOrNull { it.isVisibleToUser }
+                    ?: root.findAccessibilityNodeInfosByText("Show navigation drawer").firstOrNull { it.isVisibleToUser }
+            }
+            if (navigation.viewIdResourceName?.endsWith(":id/roots_list") != true) touch(navigation)
+            awaitPickerNode("opening the roots drawer") { visibleResource(it, "roots_list") }
+            touch(awaitPickerNode("locating the Images root") { listTouchTarget(it, "roots_list", "Images") })
+            awaitPickerNode("opening Images") { listTouchTarget(it, "dir_list", folderName) }
+            automation.rootInActiveWindow?.findAccessibilityNodeInfosByText("List view")
+                ?.firstOrNull { it.isVisibleToUser }?.let { toggle ->
+                    touch(toggle)
+                    awaitPickerNode("switching to list view") { root ->
+                        root.findAccessibilityNodeInfosByText("Grid view").firstOrNull { it.isVisibleToUser }
+                    }
+                }
+            touch(awaitPickerNode("opening Images and locating the fixture folder") { listTouchTarget(it, "dir_list", folderName) })
+            touch(awaitPickerNode("opening the fixture folder and locating its photo") { listTouchTarget(it, "dir_list", name) })
             try {
-                withTimeout(30_000) {
-                    while (!fixtureClicked) {
-                        val rootNode = automation.rootInActiveWindow
-                        rootSeen = rootSeen || rootNode != null
-                        activePackage = rootNode?.packageName?.toString() ?: activePackage
-                        for (control in listOf("Images", "Recent", "Allow", "No items")) {
-                            if (rootNode?.findAccessibilityNodeInfosByText(control)?.isNotEmpty() == true) controlsSeen += control
-                        }
-                        if (!imagesOpened) {
-                            val imagesRoot = rootNode?.findAccessibilityNodeInfosByText("Images")
-                                ?.firstOrNull { it.text?.toString() == "Images" && isRootEntry(it) }
-                            if (imagesRoot != null) imagesOpened = click(imagesRoot)
-                            else if (!rootsOpened) {
-                                val showRoots = rootNode?.findAccessibilityNodeInfosByText("Show roots")?.firstOrNull()
-                                    ?: rootNode?.findAccessibilityNodeInfosByText("Show navigation drawer")?.firstOrNull()
-                                if (showRoots != null) rootsOpened = click(showRoots)
-                            }
-                            delay(100)
-                            continue
-                        }
-                        val candidates = rootNode?.findAccessibilityNodeInfosByText(name.removeSuffix(".jpg")).orEmpty()
-                        val exactMatches = candidates.filter { it.text?.toString() in listOf(name, name.removeSuffix(".jpg")) }
-                        matchCount = maxOf(matchCount, candidates.size)
-                        exactMatchCount = maxOf(exactMatchCount, exactMatches.size)
-                        val fileNode = exactMatches.firstOrNull()
-                            ?: candidates.firstOrNull { it.contentDescription?.contains(name) == true }
-                        if (fileNode != null) {
-                            fixtureSeen = true
-                            fixtureClicked = click(fileNode)
-                        }
-                        if (!folderOpened && !fixtureClicked) {
-                            val folder = rootNode?.findAccessibilityNodeInfosByText(folderName)
-                                ?.firstOrNull { (it.text?.toString() == folderName || it.contentDescription?.contains(folderName) == true) && isFileListEntry(it) }
-                            if (folder != null) {
-                                folderSeen = true
-                                folderOpened = click(folder)
-                            }
+                withTimeout(20_000) {
+                    var confirmed = false
+                    while (context.checkUriPermission(document, Process.myPid(), Process.myUid(),
+                            Intent.FLAG_GRANT_READ_URI_PERMISSION) != PackageManager.PERMISSION_GRANTED) {
+                        if (!confirmed) {
+                            automation.rootInActiveWindow?.findAccessibilityNodeInfosByText("Select")
+                                ?.firstOrNull { it.text?.toString()?.equals("Select", ignoreCase = true) == true && it.isVisibleToUser && it.isEnabled }
+                                ?.let { touch(it); confirmed = true }
                         }
                         delay(100)
                     }
-                    while (context.checkUriPermission(document, Process.myPid(), Process.myUid(),
-                            Intent.FLAG_GRANT_READ_URI_PERMISSION) != PackageManager.PERMISSION_GRANTED) delay(100)
                 }
             } catch (error: TimeoutCancellationException) {
-                throw AssertionError("System picker timed out: root=$rootSeen, folder=$folderSeen, " +
-                    "folderOpened=$folderOpened, fixture=$fixtureSeen, fixtureClicked=$fixtureClicked, " +
-                    "rootsOpened=$rootsOpened, imagesOpened=$imagesOpened, " +
-                    "package=$activePackage, controls=$controlsSeen, matches=$matchCount, exactMatches=$exactMatchCount", error)
+                val root = automation.rootInActiveWindow
+                val controls = listOf("Open", "OPEN", "Select", "SELECT", "Choose", "Done", "List view", "Grid view", "Show roots")
+                    .filter { root?.findAccessibilityNodeInfosByText(it)?.isNotEmpty() == true }
+                val fixtureVisible = root?.findAccessibilityNodeInfosByText(name)?.any { it.isVisibleToUser } == true
+                val folderVisible = root?.findAccessibilityNodeInfosByText(folderName)?.any { it.isVisibleToUser } == true
+                throw AssertionError("System picker did not return the selected document grant: package=${root?.packageName}, " +
+                    "controls=$controls, fixture=$fixtureVisible, folder=$folderVisible, touch=$lastTouch", error)
             }
         }
 
-        private fun isRootEntry(start: AccessibilityNodeInfo): Boolean {
-            var node = start.parent
-            while (node != null) {
-                if (node.viewIdResourceName?.endsWith(":id/roots_list") == true) return true
-                node = node.parent
+        private suspend fun awaitPickerNode(stage: String, find: (AccessibilityNodeInfo) -> AccessibilityNodeInfo?): AccessibilityNodeInfo {
+            var activePackage = "none"
+            try {
+                return withTimeout(20_000) {
+                    var found: AccessibilityNodeInfo? = null
+                    while (found == null) {
+                        automation.rootInActiveWindow?.let { root ->
+                            activePackage = root.packageName?.toString() ?: activePackage
+                            found = find(root)?.takeIf { it.isVisibleToUser && it.isEnabled }
+                        }
+                        if (found != null) {
+                            automation.waitForIdle(300, 5_000)
+                            found = automation.rootInActiveWindow?.let(find)?.takeIf { it.isVisibleToUser && it.isEnabled }
+                        }
+                        if (found == null) delay(100)
+                    }
+                    requireNotNull(found)
+                }
+            } catch (error: TimeoutCancellationException) {
+                throw AssertionError("System picker timed out while $stage (package=$activePackage)", error)
             }
-            return false
         }
 
-        private fun isFileListEntry(start: AccessibilityNodeInfo): Boolean {
-            var node = start.parent
-            while (node != null) {
-                val className = node.className?.toString().orEmpty()
-                val resourceId = node.viewIdResourceName.orEmpty()
-                if (className.endsWith("Toolbar") || resourceId.contains("breadcrumb") || resourceId.contains("toolbar")) return false
-                if (className.endsWith("RecyclerView") || className.endsWith("GridView") || className.endsWith("ListView")) return true
-                node = node.parent
+        private fun visibleResource(root: AccessibilityNodeInfo, id: String): AccessibilityNodeInfo? =
+            root.findAccessibilityNodeInfosByViewId("${root.packageName}:id/$id").firstOrNull { it.isVisibleToUser }
+
+        private fun listTouchTarget(root: AccessibilityNodeInfo, listId: String, label: String): AccessibilityNodeInfo? {
+            val list = visibleResource(root, listId) ?: return null
+            for (candidate in list.findAccessibilityNodeInfosByText(label.removeSuffix(".jpg"))) {
+                val matches = candidate.text?.toString() in listOf(label, label.removeSuffix(".jpg")) ||
+                    candidate.contentDescription?.contains(label) == true
+                if (!matches) continue
+                val row = enclosingListRow(candidate, listId) ?: continue
+                val title = row.findAccessibilityNodeInfosByViewId("android:id/title").firstOrNull { it.isVisibleToUser }
+                // Photo grids expose the filename on the tile and its separate preview button.
+                return title ?: row.takeIf { it.isVisibleToUser }
             }
-            return false
+            return null
         }
 
-        private fun click(start: AccessibilityNodeInfo): Boolean {
+        private fun enclosingListRow(start: AccessibilityNodeInfo, listId: String): AccessibilityNodeInfo? {
             var node: AccessibilityNodeInfo? = start
-            var depth = 0
-            while (node != null && depth++ < 6) {
-                val current = node
-                if (current.isClickable && current.performAction(AccessibilityNodeInfo.ACTION_CLICK)) return true
-                node = current.parent
+            while (node != null) {
+                val parent = node.parent ?: return null
+                if (parent.viewIdResourceName?.endsWith(":id/$listId") == true) return node
+                node = parent
             }
-            val bounds = Rect().also(start::getBoundsInScreen)
-            if (!start.isVisibleToUser || bounds.isEmpty) return false
+            return null
+        }
+
+        private fun touch(node: AccessibilityNodeInfo) {
+            val bounds = Rect().also(node::getBoundsInScreen)
+            assertTrue("The picker touch target must be visible", node.isVisibleToUser && !bounds.isEmpty)
+            lastTouch = "${node.className}:${node.viewIdResourceName}:$bounds"
             shell("input tap ${bounds.centerX()} ${bounds.centerY()}")
-            return true
         }
 
         private suspend fun finishPickerHost() {

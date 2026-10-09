@@ -26,7 +26,7 @@
 
 The updated APK was installed on the Nothing A142 without clearing its profile or references. Ten explicitly selected photos initially failed because `setRequireOriginal` changed the exact granted URI. Aggregate on-phone diagnostics confirmed the original selected and mapped URIs were readable, while their query-modified forms were denied. Two files also used the `image/jpg` MIME alias.
 
-After both fixes, all ten photos imported, their imported digests matched the selected-provider bytes, and all ten previews loaded. Local recognition using two saved reference selfies checked 22 faces, produced 2 suggested photos and 3 uncertain photos, and reported no processing failures. Sharing stayed off. The user is reviewing correctness and missed matches; these counts are not an accuracy measurement. No photos, names, URIs, embeddings, or private screenshots were copied into the repository or test reports. Temporary diagnostic instrumentation was removed from the phone.
+After both fixes, all ten photos imported, their imported digests matched the selected-provider bytes, and all ten previews loaded. Local recognition using two saved reference selfies checked 22 faces, produced 2 suggested photos and 3 uncertain photos, and reported no processing failures. Sharing stayed off. After the user's review, a confirmed match remained confirmed after force-stop and relaunch. Counts of wrong or missed suggestions are still unreported, so these results are not an accuracy measurement. No photos, names, URIs, embeddings, or private screenshots were copied into the repository or test reports. Temporary diagnostic instrumentation was removed from the phone.
 
 ## Production Nearby SDK on virtual devices
 

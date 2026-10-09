@@ -17,9 +17,10 @@
 - Revoking either peer releases prepared transfer files and rejects late delivery messages. Storage tests cover interrupted writes, concurrent updates, key loss, and pending-save recovery.
 - Fixed exact selected-document grants and the `image/jpg` MIME alias after physical-phone testing. All ten user-selected photos imported with working previews; local recognition processed them without failures while sharing remained off.
 - Real system-picker regression verifies external ownership, original bytes including GPS metadata, previews, duplicate prevention, and revoked grants. It also exposed and verified the Android 10/11 document-conversion compatibility fix.
+- A user-confirmed match on the physical phone remained confirmed after force-stop and relaunch, with sharing off.
 
 ## Pending
-- The user is reviewing real-photo suggestions and missed matches on the available phone. Aggregate results establish execution, not accuracy.
+- The user reviewed real-photo suggestions on the available phone; counts of incorrect or missed suggestions are still unreported. Aggregate results establish execution, not accuracy.
 - Physical acceptance and low-light recognition evaluation remain as listed below.
 
 ## Blocked
