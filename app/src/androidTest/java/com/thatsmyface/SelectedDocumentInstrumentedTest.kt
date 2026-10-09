@@ -74,6 +74,7 @@ class SelectedDocumentInstrumentedTest {
             assertEquals(1, model.state.value.offers.size)
 
             fixture.revokeFixtureAccess()
+            fixture.assertFixtureAccessRevoked()
             assertEquals(PhotoAvailability.PERMISSION_REVOKED, model.files.checkAvailability(photo).availability)
             try {
                 model.files.outgoingSnapshot(photo)
@@ -179,18 +180,38 @@ class SelectedDocumentInstrumentedTest {
             mapped?.let { context.revokeUriPermission(context.packageName, it, Intent.FLAG_GRANT_READ_URI_PERMISSION) }
         }
 
+        suspend fun assertFixtureAccessRevoked() {
+            try {
+                withTimeout(5_000) {
+                    while (hasReadGrant(document) || mapped?.let(::hasReadGrant) == true) delay(50)
+                }
+            } catch (error: TimeoutCancellationException) {
+                throw AssertionError("Fixture grants remain after revocation: document=${hasReadGrant(document)}, " +
+                    "mapped=${mapped?.let(::hasReadGrant)}, persisted=" +
+                    resolver.persistedUriPermissions.any { it.uri == document && it.isReadPermission }, error)
+            }
+            assertDenied(document)
+            mapped?.let(::assertDenied)
+        }
+
+        private fun hasReadGrant(uri: Uri): Boolean = context.checkUriPermission(uri, Process.myPid(), Process.myUid(),
+            Intent.FLAG_GRANT_READ_URI_PERMISSION) == PackageManager.PERMISSION_GRANTED
+
         fun readExternalOriginal(): ByteArray = Base64.decode(shell("base64 $externalPath"), Base64.DEFAULT)
 
         suspend fun close() {
             automation.dropShellPermissionIdentity()
-            finishPickerHost()
-            revokeFixtureAccess()
-            if (::model.isInitialized) withContext(Dispatchers.Main) { model.stopSharing(); model.viewModelScope.cancel() }
-            store.clearAll()
-            media?.let { shell("content delete --uri $it") }
-            shell("rm -f -- $externalPath")
-            shell("rmdir -- $externalDirectory")
-            root.deleteRecursively()
+            try {
+                finishPickerHost()
+            } finally {
+                revokeFixtureAccess()
+                if (::model.isInitialized) withContext(Dispatchers.Main) { model.stopSharing(); model.viewModelScope.cancel() }
+                store.clearAll()
+                media?.let { shell("content delete --uri $it") }
+                shell("rm -f -- $externalPath")
+                shell("rmdir -- $externalDirectory")
+                root.deleteRecursively()
+            }
         }
 
         @Suppress("DEPRECATION")
@@ -304,7 +325,15 @@ class SelectedDocumentInstrumentedTest {
         }
 
         private suspend fun finishPickerHost() {
-            pickerHost?.let { withContext(Dispatchers.Main) { it.finish() } }
+            val activity = pickerHost ?: return
+            withContext(Dispatchers.Main) { activity.finish() }
+            try {
+                withTimeout(10_000) {
+                    while (!withContext(Dispatchers.Main) { activity.isDestroyed }) delay(50)
+                }
+            } catch (error: TimeoutCancellationException) {
+                throw AssertionError("The picker host did not finish destruction", error)
+            }
             pickerHost = null
             instrumentation.waitForIdleSync()
         }
