@@ -235,24 +235,32 @@ class PhotoFiles(private val context: Context) {
     private fun open(uri: Uri): InputStream {
         return try {
             val media = mediaUri(uri)
-            if (media == null) resolver.openInputStream(uri) ?: throw FileNotFoundException()
+            if (media == null) {
+                if (uri.authority in SYSTEM_DOCUMENT_PROVIDERS) withOriginalMetadataAccess {
+                    resolver.openInputStream(uri) ?: throw FileNotFoundException()
+                } else resolver.openInputStream(uri) ?: throw FileNotFoundException()
+            }
             else try {
                 openMedia(MediaStore.setRequireOriginal(media))
             } catch (error: SecurityException) {
                 // Exact document grants do not cover the query added by setRequireOriginal.
                 if (!isRegularMediaRow(media)) throw error
-                requireOriginalMetadataAccess()
-                val input = openMedia(media)
-                try {
-                    requireOriginalMetadataAccess()
-                    input
-                } catch (failure: Exception) {
-                    input.close()
-                    throw failure
-                }
+                withOriginalMetadataAccess { openMedia(media) }
             }
         } catch (_: UnsupportedOperationException) {
             throw originalMetadataError()
+        }
+    }
+
+    private inline fun withOriginalMetadataAccess(open: () -> InputStream): InputStream {
+        requireOriginalMetadataAccess()
+        val input = open()
+        return try {
+            requireOriginalMetadataAccess()
+            input
+        } catch (error: Exception) {
+            input.close()
+            throw error
         }
     }
 
@@ -283,8 +291,8 @@ class PhotoFiles(private val context: Context) {
         requireContentUri(uri)
         return when {
             uri.authority == MediaStore.AUTHORITY -> uri
-            uri.authority == "com.android.providers.media.documents" -> MediaStore.getMediaUri(context, uri)
-            Build.VERSION.SDK_INT >= 31 && uri.authority == "com.android.externalstorage.documents" -> MediaStore.getMediaUri(context, uri)
+            // Android 10 and 11 route media-document conversion to the wrong provider.
+            Build.VERSION.SDK_INT >= 31 && uri.authority in SYSTEM_DOCUMENT_PROVIDERS -> MediaStore.getMediaUri(context, uri)
             else -> null
         }
     }
@@ -339,6 +347,7 @@ class PhotoFiles(private val context: Context) {
     private companion object {
         const val DESTINATION = "Pictures/ThatsMyFace/"
         const val MAX_FOLDER_ITEMS = 2_000
+        val SYSTEM_DOCUMENT_PROVIDERS = setOf("com.android.providers.media.documents", "com.android.externalstorage.documents")
         val IMAGE_EXTENSIONS = mapOf("image/jpeg" to "jpg", "image/png" to "png", "image/webp" to "webp",
             "image/heic" to "heic", "image/heif" to "heif", "image/avif" to "avif")
     }
