@@ -39,6 +39,7 @@ import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeout
+import kotlinx.coroutines.withTimeoutOrNull
 import org.junit.Assert.*
 import org.junit.Test
 
@@ -225,14 +226,11 @@ class SelectedDocumentInstrumentedTest {
                         DocumentsContract.buildRootUri("com.android.providers.media.documents", "images_root"))
                 }, 4107)
             }
-            val navigation = awaitPickerNode("locating the roots drawer") { root ->
-                visibleResource(root, "roots_list")
-                    ?: root.findAccessibilityNodeInfosByText("Show roots").firstOrNull { it.isVisibleToUser }
-                    ?: root.findAccessibilityNodeInfosByText("Show navigation drawer").firstOrNull { it.isVisibleToUser }
-            }
-            if (navigation.viewIdResourceName?.endsWith(":id/roots_list") != true) touch(navigation)
-            awaitPickerNode("opening the roots drawer") { visibleResource(it, "roots_list") }
-            touch(awaitPickerNode("locating the Images root") { listTouchTarget(it, "roots_list", "Images") })
+            val initialFolderVisible = withTimeoutOrNull(3_000) {
+                while (automation.rootInActiveWindow?.let { listTouchTarget(it, "dir_list", folderName) } == null) delay(100)
+                true
+            } == true
+            if (!initialFolderVisible) openImagesRoot()
             awaitPickerNode("opening Images") { listTouchTarget(it, "dir_list", folderName) }
             automation.rootInActiveWindow?.findAccessibilityNodeInfosByText("List view")
                 ?.firstOrNull { it.isVisibleToUser }?.let { toggle ->
@@ -265,6 +263,52 @@ class SelectedDocumentInstrumentedTest {
                 throw AssertionError("System picker did not return the selected document grant: package=${root?.packageName}, " +
                     "controls=$controls, fixture=$fixtureVisible, folder=$folderVisible, touch=$lastTouch", error)
             }
+        }
+
+        private suspend fun openImagesRoot() {
+            val navigation = awaitPickerNode("locating the roots drawer") { root ->
+                listTouchTarget(root, "dir_list", folderName)
+                    ?: visibleResource(root, "roots_list")
+                    ?: root.findAccessibilityNodeInfosByText("Show roots").firstOrNull { it.isVisibleToUser }
+                    ?: root.findAccessibilityNodeInfosByText("Show navigation drawer").firstOrNull { it.isVisibleToUser }
+            }
+            if (enclosingListRow(navigation, "dir_list") != null) return
+            if (navigation.viewIdResourceName?.endsWith(":id/roots_list") != true) touch(navigation)
+            val populated = awaitPickerNode("populating the roots drawer") { root ->
+                listTouchTarget(root, "dir_list", folderName)
+                    ?: visibleResource(root, "roots_list")?.takeIf { it.childCount > 0 }
+            }
+            if (enclosingListRow(populated, "dir_list") != null) return
+
+            var scrolls = 0
+            for (direction in listOf(AccessibilityNodeInfo.ACTION_SCROLL_BACKWARD, AccessibilityNodeInfo.ACTION_SCROLL_FORWARD)) {
+                for (attempt in 0 until 8) {
+                    val root = automation.rootInActiveWindow
+                    if (root != null) {
+                        if (listTouchTarget(root, "dir_list", folderName) != null) return
+                        val images = listTouchTarget(root, "roots_list", "Images")
+                        if (images != null) {
+                            touch(awaitPickerNode("locating the Images root") { listTouchTarget(it, "roots_list", "Images") })
+                            return
+                        }
+                        val roots = visibleResource(root, "roots_list") ?: break
+                        if (!roots.performAction(direction)) break
+                        scrolls++
+                    }
+                    delay(250)
+                }
+            }
+            val root = automation.rootInActiveWindow
+            if (root != null) {
+                if (listTouchTarget(root, "dir_list", folderName) != null) return
+                listTouchTarget(root, "roots_list", "Images")?.let { touch(it); return }
+            }
+            val roots = root?.let { visibleResource(it, "roots_list") }
+            val knownRoots = listOf("Recent", "Images", "Downloads").filter {
+                roots?.findAccessibilityNodeInfosByText(it)?.any { node -> node.isVisibleToUser } == true
+            }
+            throw AssertionError("System picker could not locate Images: rootsVisible=${roots != null}, " +
+                "children=${roots?.childCount ?: 0}, scrolls=$scrolls, knownRoots=$knownRoots")
         }
 
         private suspend fun awaitPickerNode(stage: String, find: (AccessibilityNodeInfo) -> AccessibilityNodeInfo?): AccessibilityNodeInfo {

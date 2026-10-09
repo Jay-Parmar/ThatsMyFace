@@ -10,7 +10,7 @@
 - E: Privacy deletion, local feedback/export, readable dark UI, setup/privacy/model documentation, and two-phone checklist implemented.
 - Real bundled YuNet/SFace detection, alignment, and embeddings execute on host, Android 16 emulator, and physical Android 16 phone.
 - Local persistence, original byte preservation, duplicate saves, revoked provider access, and cancelled save tested on emulator.
-- Local build/lint, 74 JVM tests, and 41 Android instrumentation tests passed on both API 29 and API 36. Model tests cover degraded images and orientation. CI now covers both Android versions.
+- Local build/lint, 74 JVM tests, and 42 Android instrumentation tests passed across API 29 local and API 36 CI emulators. Model tests cover degraded images and orientation. CI covers both Android versions.
 - Integrated GitHub build, model, and emulator jobs passed after the recovery fixes. The earlier APK installed and launched on the available physical phone, with working Nearby startup.
 - Production Nearby SDK on two isolated API 36 emulators passed pairing, opt-in reference exchange, source-side recognition, approval/rejection, original byte integrity, persisted waiting state, reconnect/retry, and future-access removal.
 - Saved-copy checks distinguish intact, missing, changed, and unreadable copies. Missing copies require a fresh request and owner approval; an intact copy does not produce another download.
