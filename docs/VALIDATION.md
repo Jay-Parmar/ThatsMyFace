@@ -4,11 +4,15 @@
 
 - Foundation staged snapshot: `assembleDebug lintDebug` using JDK 17, Gradle 8.13, AGP 8.13.2, Android SDK 36.
 - Main-worktree build: `assembleDebug assembleDebugAndroidTest testDebugUnitTest lintDebug` passed. Lint reported no errors; reviewed warnings include pinned dependency versions and guarded platform APIs.
-- JVM suite: 67 tests passed, covering invitations, encryption, event access, integrity, recognition decisions, wire validation, transfer transitions, retries, saved-copy admission, and compatibility with older persisted transfers.
+- JVM suite: 74 tests passed, covering invitations, encryption, event access, integrity, recognition thresholds and ambiguity, preprocessing dimensions, wire validation, transfer transitions, retries, saved-copy admission, and compatibility with older persisted transfers.
 - Host recognition smoke: bundled model checksums, real YuNet/SFace execution, alignment, 128-value embedding, recompressed same-face match, multiple faces, and no face.
 - Foundation GitHub Actions: build, lint, and APK artifact passed after replacing the retired SDK `tools` package with explicit supported packages.
-- Integrated [GitHub Actions run 37801717760](https://github.com/Jay-Parmar/ThatsMyFace/actions/runs/37801717760), source commit `436b76d`, passed all three jobs: build/lint/JVM checks, host model execution, and Android emulator instrumentation. The debug APK and test reports are attached to that run.
-- Android 16 x86_64 emulator: all 24 instrumentation tests passed. Includes 6 storage tests, 4 actual-model/preprocessing tests, 10 paired-session tests, 2 application-flow tests, and 2 preview validation tests. Run with `adb -s emulator-5554 shell am instrument -w com.thatsmyface.test/androidx.test.runner.AndroidJUnitRunner` after installing the debug and test APKs.
+- Integrated [GitHub Actions run 37958979973](https://github.com/Jay-Parmar/ThatsMyFace/actions/runs/37958979973), source commit `517722e`, passed all four jobs: build/lint/JVM checks, host model execution, and API 29/API 36 instrumentation. That run preceded the additional system-picker regression and Android 10/11 compatibility fix. The debug APK and test reports are attached to the run.
+- Android 10 / API 29 and Android 16 / API 36 x86_64 emulators: all 41 instrumentation tests passed on each. Includes 12 storage tests, 8 actual-model/preprocessing tests, 16 paired-session tests, 2 application-flow tests, 2 preview validation tests, and 1 real system-picker regression. Run with `adb -s DEVICE_SERIAL shell am instrument -w com.thatsmyface.test/androidx.test.runner.AndroidJUnitRunner` after installing the debug and test APKs on a test installation.
+- The API 29 emulator also passed all 8 model tests with Wi-Fi and cellular data disabled and no active default network. This verifies offline model execution, not offline Nearby pairing.
+- Recognition tests cover EXIF orientations 2 through 8, resized color-correct decoding, small/dark/blurred/washed-out faces, and recovery after an invalid image. Storage tests cover interrupted atomic writes, concurrent updates/saves, missing encryption keys, changed sources, and pending MediaStore saves.
+- Peer revocation tests exposed and verified a fix for prepared outgoing files left in cache. Local and remote revocation now cancel and release payloads even after persisted revocation clears their handles. Late readiness and file delivery cannot complete cancelled requests.
+- The real system picker grants access to a shell-created synthetic JPEG containing GPS metadata. The test checks external ownership, denied access before selection, exact original bytes and GPS after import/snapshot, previews, duplicate prevention, and blocked sharing after grant revocation. It exposed Android 10/11 routing media-document conversion to the wrong provider; those versions now retain the selected document URI. Fixture setup and picker navigation were corrected before passing. A System UI hang on the local API 36 emulator required recovery; no application success is inferred from that failed setup run.
 - Paired-session tests use two real controllers, encrypted stores, and MediaStore copies with a test-only connection. They cover approval, original integrity, duplicate prevention, reconnect/retry, corruption, readiness ordering, and failed setup cleanup. They do not test the Nearby radio implementation.
 - Application-flow tests exercise selected-photo import, manual correction, actual enrollment and matching, feedback exclusion, missing-photo cleanup, and local deletion using an isolated key and test data.
 - Recovery regression tests cover rapid stop/start, stale reference deletion, and local cancellation despite a failed notification.
@@ -17,6 +21,12 @@
 - Actual Nearby advertising/discovery startup and explicit session stop also passed on the Android 16 emulator after granting the app's requested permission. No radio pairing or original transfer was attempted in that smoke check.
 - Physical Nothing A142 phone, Android 16: debug APK installation, onboarding, profile/event creation, persistence after force-stop/relaunch, and all 4 recognition instrumentation tests passed. Nearby permission approval and actual advertising/discovery startup passed. No second physical phone was available and no friends' photos were used.
 - The earlier debug APK was reinstalled on that phone and launched successfully with the saved profile/event intact. Actual Nearby startup passed again; the session was stopped after testing. These phone checks preceded the saved-copy recovery changes; the latest APK has been checked on emulators.
+
+## Selected photos on the physical phone
+
+The updated APK was installed on the Nothing A142 without clearing its profile or references. Ten explicitly selected photos initially failed because `setRequireOriginal` changed the exact granted URI. Aggregate on-phone diagnostics confirmed the original selected and mapped URIs were readable, while their query-modified forms were denied. Two files also used the `image/jpg` MIME alias.
+
+After both fixes, all ten photos imported, their imported digests matched the selected-provider bytes, and all ten previews loaded. Local recognition using two saved reference selfies checked 22 faces, produced 2 suggested photos and 3 uncertain photos, and reported no processing failures. Sharing stayed off. The user is reviewing correctness and missed matches; these counts are not an accuracy measurement. No photos, names, URIs, embeddings, or private screenshots were copied into the repository or test reports. Temporary diagnostic instrumentation was removed from the phone.
 
 ## Production Nearby SDK on virtual devices
 
@@ -33,7 +43,7 @@ This establishes production SDK behavior over virtual networking, not physical r
 
 ## Artifact
 
-Local APK: `app/build/outputs/apk/debug/app-debug.apk`. The verified APK SHA-256 is `ae14d465ed6fc52fc269dc0e6d74adfb6835fc250da8967570dac13bea7fddc5`. Rebuilding can produce a different debug artifact.
+Local APK: `app/build/outputs/apk/debug/app-debug.apk`. The verified APK SHA-256 is `24f87ec3cee4c51d6f073ea395f6431e4c845315f3a9b95fec8ae3a78b7d48ee`. Rebuilding can produce a different debug artifact.
 
 ## Required before claiming v1 complete
 
