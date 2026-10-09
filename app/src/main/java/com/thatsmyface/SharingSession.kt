@@ -249,7 +249,7 @@ class SharingSession(
                     store.update { it.copy(peers = it.peers.map { p -> if (p.eventId == active && p.peerId == peer) p.copy(faceRefs = emptyList()) else p }) }
                     refreshAll()
                 } else {
-                    store.update { it.revokePeer(active, peer) }
+                    removePeerAccess(active, peer)
                     transport.disconnect(endpoint)
                 }
             }
@@ -531,11 +531,26 @@ class SharingSession(
 
     suspend fun revoke(event: String, peer: String) {
         val endpoint = endpointFor(event, peer)
-        store.update { it.revokePeer(event, peer) }
+        removePeerAccess(event, peer)
         endpoint?.let {
             refreshJobs.remove(it)?.cancel()
             runCatching { transport.sendMessage(it, WireMessage.Revoke(event, false)) }
             transport.disconnect(it)
+        }
+    }
+
+    private suspend fun removePeerAccess(event: String, peer: String) {
+        var payloads = emptyList<Long>()
+        store.update { state ->
+            // Retain payload handles before persisted revocation clears them.
+            payloads = state.transfers.filter { it.eventId == event && (it.ownerId == peer || it.receiverId == peer) }
+                .mapNotNull { it.payloadId }.distinct()
+            state.revokePeer(event, peer)
+        }
+        payloads.forEach { id ->
+            runCatching { transport.cancel(id) }
+            receivingJobs.remove(id)?.cancel()
+            releasePrepared(id)
         }
     }
 

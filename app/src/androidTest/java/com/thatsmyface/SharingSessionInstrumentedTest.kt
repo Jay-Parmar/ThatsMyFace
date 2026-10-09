@@ -264,6 +264,151 @@ class SharingSessionInstrumentedTest {
         } finally { fixture.close() }
     }
 
+    @Test fun revokingAQueuedOriginalRemovesItsSnapshotAndRejectsLateReady() = runBlocking {
+        assertQueuedRevocation(ownerInitiated = true)
+    }
+
+    @Test fun receiverRevocationRemovesTheOwnersQueuedSnapshot() = runBlocking {
+        assertQueuedRevocation(ownerInitiated = false)
+    }
+
+    private suspend fun assertQueuedRevocation(ownerInitiated: Boolean) {
+        val fixture = Fixture()
+        try {
+            fixture.initialize()
+            fixture.pair()
+            fixture.request()
+            fixture.receiverLink.deferReady = true
+            withContext(Dispatchers.Main) { fixture.owner.approve(fixture.ownerTransfer()) }
+            fixture.await { fixture.receiverLink.deferredReady != null }
+            assertEquals(TransferStatus.QUEUED, fixture.ownerTransfer().status)
+            val payloadId = requireNotNull(fixture.ownerTransfer().payloadId)
+            val snapshots = File(fixture.ownerContext.cacheDir, "outgoing")
+            assertEquals(1, snapshots.listFiles().orEmpty().count { it.isFile })
+
+            withContext(Dispatchers.Main) {
+                if (ownerInitiated) {
+                    fixture.owner.revoke(fixture.event.id, requireNotNull(fixture.receiverStore.state.value.profile).id)
+                } else {
+                    fixture.receiver.revoke(fixture.event.id, requireNotNull(fixture.ownerStore.state.value.profile).id)
+                }
+            }
+            fixture.await {
+                fixture.receiverStore.state.value.peers.singleOrNull()?.allowed == false &&
+                    fixture.ownerStore.state.value.peers.singleOrNull()?.allowed == false &&
+                    payloadId in fixture.ownerLink.cancelledPayloads
+            }
+            withContext(Dispatchers.Main) { fixture.receiverLink.deliverDeferredReady() }
+
+            assertEquals(TransferStatus.CANCELLED, fixture.ownerTransfer().status)
+            assertEquals(TransferStatus.CANCELLED, fixture.receiverTransfer()?.status)
+            assertFalse(fixture.ownerTransfer().approved)
+            assertTrue(fixture.receiverStore.state.value.offers.isEmpty())
+            assertEquals(0, fixture.ownerLink.filesSent)
+            assertNull(fixture.receiverTransfer()?.savedUri)
+            assertArrayEquals(fixture.original, fixture.read(fixture.source))
+            assertEquals("Revoked outgoing copies must be removed before the session ends", 0,
+                snapshots.listFiles().orEmpty().count { it.isFile })
+        } finally { fixture.close() }
+    }
+
+    @Test fun matchedTransportCodesDoNotAdmitTheWrongEventSecret() = runBlocking {
+        val fixture = Fixture()
+        try {
+            fixture.initialize(receiverSecret = "b".repeat(64))
+            fixture.pair(waitForCatalog = false)
+            fixture.await {
+                fixture.ownerLink.peers.value.singleOrNull()?.status == PeerStatus.DISCONNECTED &&
+                    fixture.receiverLink.peers.value.singleOrNull()?.status == PeerStatus.DISCONNECTED
+            }
+            assertTrue(fixture.ownerStore.state.value.peers.isEmpty())
+            assertTrue(fixture.receiverStore.state.value.peers.isEmpty())
+            assertTrue(fixture.ownerLink.messages.none(::isPrivate))
+            assertTrue(fixture.receiverLink.messages.none(::isPrivate))
+            assertTrue(fixture.receiverStore.state.value.offers.isEmpty())
+            assertEquals(0, fixture.ownerLink.filesSent)
+        } finally { fixture.close() }
+    }
+
+    @Test fun verifiedFriendCannotRequestAPhotoFromAnotherEvent() = runBlocking {
+        val fixture = Fixture()
+        try {
+            fixture.initialize()
+            val otherEvent = Event(title = "Separate fixture event", secret = "b".repeat(64))
+            val foreignPhoto = fixture.ownerStore.state.value.photos.single().copy(id = newId(), eventId = otherEvent.id)
+            fixture.ownerStore.update { it.copy(events = it.events + otherEvent, photos = it.photos + foreignPhoto) }
+            fixture.pair()
+
+            assertFalse(fixture.sendRequestExpectingRejection(foreignPhoto.id).approved)
+            assertFalse(fixture.sendRequestExpectingRejection(newId()).approved)
+            assertTrue(fixture.ownerStore.state.value.transfers.isEmpty())
+            assertTrue(fixture.receiverStore.state.value.transfers.isEmpty())
+            assertEquals(1, fixture.receiverStore.state.value.offers.size)
+            assertNotEquals(foreignPhoto.id, fixture.receiverStore.state.value.offers.single().photoId)
+            assertEquals(0, fixture.ownerLink.filesSent)
+            assertArrayEquals(fixture.original, fixture.read(fixture.source))
+        } finally { fixture.close() }
+    }
+
+    @Test fun staleCancellationAndDuplicateRequestsDoNotReplaceAFreshApproval() = runBlocking {
+        val fixture = Fixture()
+        try {
+            fixture.initialize()
+            fixture.pair()
+            fixture.request()
+            val previous = fixture.ownerTransfer()
+            withContext(Dispatchers.Main) { fixture.receiver.cancel(requireNotNull(fixture.receiverTransfer())) }
+            fixture.await { fixture.ownerTransfer().status == TransferStatus.CANCELLED }
+            withContext(Dispatchers.Main) { fixture.receiver.retry(requireNotNull(fixture.receiverTransfer())) }
+            fixture.await {
+                fixture.ownerTransfer().status == TransferStatus.AWAITING_APPROVAL &&
+                    fixture.ownerTransfer().requestId != previous.requestId
+            }
+            val fresh = fixture.ownerTransfer()
+            withContext(Dispatchers.Main) {
+                repeat(2) {
+                    fixture.receiverLink.sendMessage(fixture.ownerLink.id, WireMessage.Request(fresh.eventId, fresh.requestId, fresh.photoId))
+                }
+                fixture.receiverLink.sendMessage(fixture.ownerLink.id, WireMessage.Cancel(previous.eventId, previous.requestId, previous.photoId))
+            }
+            // The denial acknowledges that the preceding byte messages have been handled.
+            fixture.sendRequestExpectingRejection(newId())
+            assertEquals(fresh, fixture.ownerTransfer())
+            assertEquals(1, fixture.ownerStore.state.value.transfers.size)
+            assertEquals(0, fixture.ownerLink.filesSent)
+
+            withContext(Dispatchers.Main) { fixture.owner.approve(fresh) }
+            fixture.await { fixture.receiverTransfer()?.status == TransferStatus.COMPLETE && fixture.ownerTransfer().status == TransferStatus.COMPLETE }
+            assertEquals(1, fixture.ownerLink.filesSent)
+            assertArrayEquals(fixture.original, fixture.read(Uri.parse(fixture.receiverTransfer()!!.savedUri)))
+        } finally { fixture.close() }
+    }
+
+    @Test fun fileCompletionAfterCancellationRemovesStagingWithoutSavingAnOriginal() = runBlocking {
+        val fixture = Fixture()
+        try {
+            fixture.initialize()
+            fixture.pair()
+            fixture.request()
+            fixture.ownerLink.deferFile = true
+            withContext(Dispatchers.Main) { fixture.owner.approve(fixture.ownerTransfer()) }
+            fixture.await { fixture.ownerLink.deferredFile != null }
+            val delayed = requireNotNull(fixture.ownerLink.deferredFile)
+            assertTrue(fixture.mediaExists(delayed.uri))
+            assertNotEquals(TransferStatus.COMPLETE, fixture.ownerTransfer().status)
+
+            withContext(Dispatchers.Main) { fixture.receiver.cancel(requireNotNull(fixture.receiverTransfer())) }
+            fixture.await { fixture.ownerTransfer().status == TransferStatus.CANCELLED }
+            withContext(Dispatchers.Main) { fixture.ownerLink.deliverDeferredFile() }
+            fixture.await { !fixture.mediaExists(delayed.uri) }
+
+            assertEquals(TransferStatus.CANCELLED, fixture.receiverTransfer()?.status)
+            assertNull(fixture.receiverTransfer()?.savedUri)
+            assertTrue(fixture.receiverLink.messages.none { it is WireMessage.Receipt })
+            assertArrayEquals(fixture.original, fixture.read(fixture.source))
+        } finally { fixture.close() }
+    }
+
     private class Fixture {
         val context: Context = InstrumentationRegistry.getInstrumentation().targetContext
         private val testId = newId()
@@ -284,7 +429,7 @@ class SharingSessionInstrumentedTest {
         lateinit var source: Uri
         lateinit var original: ByteArray
 
-        suspend fun initialize() {
+        suspend fun initialize(receiverSecret: String = event.secret) {
             ownerLink.other = receiverLink
             receiverLink.other = ownerLink
             val bitmap = Bitmap.createBitmap(24, 24, Bitmap.Config.ARGB_8888).apply { eraseColor(0xff4f64e8.toInt()) }
@@ -293,8 +438,9 @@ class SharingSessionInstrumentedTest {
             source = stage(original)
             val photo = PhotoFiles(ownerContext).importPhoto(event.id, source, persistPermission = false)
             ownerStore.update { it.copy(profile = Profile(nickname = "Owner"), events = listOf(event), photos = listOf(photo)) }
-            receiverStore.update { it.copy(profile = Profile(nickname = "Receiver"), events = listOf(event)) }
-            withContext(Dispatchers.Main) { owner.start(event); receiver.start(event) }
+            val receiverEvent = event.copy(secret = receiverSecret)
+            receiverStore.update { it.copy(profile = Profile(nickname = "Receiver"), events = listOf(receiverEvent)) }
+            withContext(Dispatchers.Main) { owner.start(event); receiver.start(receiverEvent) }
         }
 
         suspend fun pair(waitForCatalog: Boolean = true) {
@@ -313,6 +459,17 @@ class SharingSessionInstrumentedTest {
         suspend fun request() {
             withContext(Dispatchers.Main) { receiver.request(receiverStore.state.value.offers.single()) }
             await { ownerStore.state.value.transfers.singleOrNull()?.status == TransferStatus.AWAITING_APPROVAL }
+        }
+
+        suspend fun sendRequestExpectingRejection(photoId: String): WireMessage.Decision {
+            val requestId = newId()
+            withContext(Dispatchers.Main) {
+                receiverLink.sendMessage(ownerLink.id, WireMessage.Request(event.id, requestId, photoId))
+            }
+            await { ownerLink.messages.filterIsInstance<WireMessage.Decision>().any { it.requestId == requestId } }
+            return ownerLink.messages.filterIsInstance<WireMessage.Decision>().single { it.requestId == requestId }.also {
+                assertFalse(it.approved)
+            }
         }
 
         fun ownerTransfer(): Transfer = ownerStore.state.value.transfers.single()
@@ -336,6 +493,9 @@ class SharingSessionInstrumentedTest {
         }
 
         fun read(uri: Uri) = context.contentResolver.openInputStream(uri)!!.use { it.readBytes() }
+
+        fun mediaExists(uri: Uri): Boolean = context.contentResolver.query(uri, arrayOf(MediaStore.MediaColumns._ID), null, null, null)
+            ?.use { it.moveToFirst() } == true
 
         private fun stage(bytes: ByteArray): Uri {
             val uri = context.contentResolver.insert(MediaStore.Images.Media.getContentUri(MediaStore.VOLUME_EXTERNAL_PRIMARY), ContentValues().apply {
@@ -375,11 +535,16 @@ class SharingSessionInstrumentedTest {
         override val events = MutableSharedFlow<TransportEvent>(extraBufferCapacity = 64)
         override val active = MutableStateFlow(false)
         val messages = CopyOnWriteArrayList<WireMessage>()
+        val cancelledPayloads = mutableSetOf<Long>()
         var filesSent = 0
         var interruptNextFile = false
         var corruptNextFile = false
         var failNextReady = false
         var failNextCancel = false
+        var deferReady = false
+        var deferredReady: WireMessage.Ready? = null
+        var deferFile = false
+        var deferredFile: TransportEvent.FileReceived? = null
         var readyBarrier: CompletableDeferred<Unit>? = null
         var readyEntered = false
         private var accepted = false
@@ -433,7 +598,18 @@ class SharingSessionInstrumentedTest {
             check(decoded is WireMessage.Hello || (decoded is WireMessage.EventReady && other.receivedHello) || other.allowed) { "Private data arrived before event verification" }
             if (decoded is WireMessage.Hello) other.receivedHello = true
             messages += message
+            if (decoded is WireMessage.Ready && deferReady) { deferredReady = decoded; return }
             other.events.emit(TransportEvent.Message(id, decoded))
+        }
+        suspend fun deliverDeferredReady() {
+            val message = requireNotNull(deferredReady)
+            deferredReady = null
+            other.events.emit(TransportEvent.Message(id, message))
+        }
+        suspend fun deliverDeferredFile() {
+            val file = requireNotNull(deferredFile)
+            deferredFile = null
+            other.events.emit(file)
         }
         override fun prepareFile(file: File): PreparedFile = PreparedFile(Payload.fromFile(file), null).also { originals[it.payloadId] = file }
         override fun prepareFile(descriptor: ParcelFileDescriptor): PreparedFile = error("This fixture uses selected file snapshots")
@@ -449,10 +625,11 @@ class SharingSessionInstrumentedTest {
             val uri = stage(bytes)
             events.emit(TransportEvent.Progress(other.id, prepared.payloadId, bytes.size.toLong(), bytes.size.toLong(), PayloadStatus.SUCCESS))
             other.events.emit(TransportEvent.Progress(id, prepared.payloadId, bytes.size.toLong(), bytes.size.toLong(), PayloadStatus.SUCCESS))
-            other.events.emit(TransportEvent.FileReceived(id, prepared.payloadId, uri))
+            val received = TransportEvent.FileReceived(id, prepared.payloadId, uri)
+            if (deferFile) deferredFile = received else other.events.emit(received)
         }
         override fun expectFile(endpointId: String, payloadId: Long, byteCount: Long) { check(allowed && endpointId == other.id); check(expected.put(payloadId, byteCount) == null) }
-        override fun cancel(payloadId: Long) { expected.remove(payloadId); originals.remove(payloadId) }
+        override fun cancel(payloadId: Long) { cancelledPayloads += payloadId; expected.remove(payloadId); originals.remove(payloadId) }
     }
 
     companion object {
