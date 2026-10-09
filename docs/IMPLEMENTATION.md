@@ -18,10 +18,12 @@
 - Fixed exact selected-document grants and the `image/jpg` MIME alias after physical-phone testing. All ten user-selected photos imported with working previews; local recognition processed them without failures while sharing remained off.
 - Real system-picker regression verifies external ownership, original bytes including GPS metadata, previews, duplicate prevention, and revoked grants. It also exposed and verified the Android 10/11 document-conversion compatibility fix.
 - A user-confirmed match on the physical phone remained confirmed after force-stop and relaunch, with sharing off.
+- Folder selection now accepts the same JPEG aliases as individual selection, with a nested-folder and byte-integrity regression.
 
 ## Pending
 - The user reviewed real-photo suggestions on the available phone; counts of incorrect or missed suggestions are still unreported. Aggregate results establish execution, not accuracy.
 - Physical acceptance and low-light recognition evaluation remain as listed below.
+- Investigate an intermittent local system-picker revocation assertion; standalone, repeated combined runs, and both CI Android versions passed.
 
 ## Blocked
 - Two-physical-phone acceptance requires a second available Android phone. One physical phone and two isolated emulators are available.

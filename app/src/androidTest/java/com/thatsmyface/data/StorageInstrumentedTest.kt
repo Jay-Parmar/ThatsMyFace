@@ -1,10 +1,17 @@
 package com.thatsmyface.data
 
+import android.content.ContentProvider
+import android.content.ContentResolver
 import android.content.ContentValues
 import android.content.Context
 import android.content.ContextWrapper
+import android.content.pm.ProviderInfo
+import android.database.Cursor
+import android.database.MatrixCursor
 import android.graphics.Bitmap
 import android.net.Uri
+import android.os.ParcelFileDescriptor
+import android.provider.DocumentsContract
 import android.provider.MediaStore
 import android.util.AtomicFile
 import androidx.test.platform.app.InstrumentationRegistry
@@ -351,6 +358,39 @@ class StorageInstrumentedTest {
         }
     }
 
+    @Test fun folderImportAcceptsJpgAliasesAndKeepsOnlyAuthorizedImageBytes() = runBlocking {
+        val fixture = PrivateFixture(context)
+        try {
+            val image = File(fixture.context.cacheDir, "folder-original.jpg")
+            val bitmap = Bitmap.createBitmap(16, 16, Bitmap.Config.ARGB_8888).apply { eraseColor(0xff604080.toInt()) }
+            try {
+                image.outputStream().use { assertTrue(bitmap.compress(Bitmap.CompressFormat.JPEG, 90, it)) }
+            } finally { bitmap.recycle() }
+            val original = image.readBytes()
+            val provider = FolderProvider(image)
+            provider.attachInfo(fixture.context, ProviderInfo().apply { authority = "com.thatsmyface.test.folder" })
+            val wrappedResolver = ContentResolver.wrap(provider)
+            val folderContext = object : ContextWrapper(fixture.context) {
+                override fun getContentResolver(): ContentResolver = wrappedResolver
+            }
+            val files = PhotoFiles(folderContext)
+            val tree = DocumentsContract.buildTreeDocumentUri("com.thatsmyface.test.folder", "event")
+            val selected = files.listFolder(tree, persistPermission = false)
+            assertEquals(setOf("event/alias", "event/nested/photo"), selected.map(DocumentsContract::getDocumentId).toSet())
+            assertEquals(setOf("event", "event/nested"), provider.queriedFolders)
+            for (uri in selected) {
+                val photo = files.importPhoto("folder-event", uri, persistPermission = false)
+                assertEquals("image/jpeg", photo.mimeType)
+                assertEquals(sha256(original), photo.sha256)
+                assertEquals(original.size.toLong(), photo.size)
+                val snapshot = files.outgoingSnapshot(photo)
+                try { assertArrayEquals(original, snapshot.readBytes()) }
+                finally { snapshot.delete() }
+            }
+            assertArrayEquals(original, image.readBytes())
+        } finally { fixture.close() }
+    }
+
     @Suppress("DEPRECATION")
     private fun savedCopies(transfer: Transfer): List<Uri> {
         val collection = MediaStore.Images.Media.getContentUri(MediaStore.VOLUME_EXTERNAL_PRIMARY)
@@ -361,6 +401,50 @@ class StorageInstrumentedTest {
                 while (cursor.moveToNext()) add(Uri.withAppendedPath(collection, cursor.getLong(0).toString()))
             }
         }
+    }
+
+    private class FolderProvider(private val image: File) : ContentProvider() {
+        val queriedFolders = mutableSetOf<String>()
+        private val rows = mapOf(
+            "event" to listOf(
+                arrayOf("event/alias", "IMAGE/JPG", "alias.jpg"),
+                arrayOf("event/nested", DocumentsContract.Document.MIME_TYPE_DIR, "Nested"),
+                arrayOf("event/note", "text/plain", "note.txt"),
+            ),
+            "event/nested" to listOf(
+                arrayOf("event/nested/photo", "image/jpeg", "photo.jpg"),
+                arrayOf("event/nested/video", "video/mp4", "video.mp4"),
+            ),
+        )
+
+        override fun onCreate() = true
+        override fun getType(uri: Uri): String = document(DocumentsContract.getDocumentId(uri))[1]
+        override fun openFile(uri: Uri, mode: String): ParcelFileDescriptor {
+            check(mode == "r" && DocumentsContract.getDocumentId(uri) in setOf("event/alias", "event/nested/photo"))
+            return ParcelFileDescriptor.open(image, ParcelFileDescriptor.MODE_READ_ONLY)
+        }
+        override fun query(uri: Uri, projection: Array<out String>?, selection: String?, selectionArgs: Array<out String>?, sortOrder: String?): Cursor {
+            val id = DocumentsContract.getDocumentId(uri)
+            val documents = if (uri.lastPathSegment == "children") {
+                queriedFolders += id
+                requireNotNull(rows[id]) { "Traversal left the selected tree" }
+            } else listOf(document(id))
+            val columns = requireNotNull(projection)
+            return MatrixCursor(columns).apply {
+                for (document in documents) addRow(columns.map { column ->
+                    when (column) {
+                        DocumentsContract.Document.COLUMN_DOCUMENT_ID -> document[0]
+                        DocumentsContract.Document.COLUMN_MIME_TYPE -> document[1]
+                        DocumentsContract.Document.COLUMN_DISPLAY_NAME -> document[2]
+                        else -> error("Unexpected fixture column")
+                    }
+                })
+            }
+        }
+        private fun document(id: String) = rows.values.flatten().first { it[0] == id }
+        override fun insert(uri: Uri, values: ContentValues?): Uri? = error("Read-only fixture")
+        override fun delete(uri: Uri, selection: String?, selectionArgs: Array<out String>?): Int = error("Read-only fixture")
+        override fun update(uri: Uri, values: ContentValues?, selection: String?, selectionArgs: Array<out String>?): Int = error("Read-only fixture")
     }
 
     private class PrivateFixture(base: Context) {

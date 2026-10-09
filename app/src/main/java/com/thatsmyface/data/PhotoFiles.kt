@@ -38,10 +38,7 @@ class PhotoFiles(private val context: Context) {
             protectAccess {
                 requireContentUri(uri)
                 if (persistPermission) persistReadPermission(uri)
-                val mime = when (val reported = resolver.getType(uri)?.lowercase()) {
-                    "image/jpg" -> "image/jpeg"
-                    else -> reported
-                }
+                val mime = normalizeMimeType(resolver.getType(uri))
                 require(mime in IMAGE_EXTENSIONS) { "Choose a JPEG, PNG, WebP, HEIC, HEIF, or AVIF photo." }
                 verifyImage { open(uri) }
                 val digest = open(uri).use { digest(it) }
@@ -53,11 +50,11 @@ class PhotoFiles(private val context: Context) {
             }
         }
 
-    suspend fun listFolder(uri: Uri): List<Uri> = withContext(Dispatchers.IO) {
+    suspend fun listFolder(uri: Uri, persistPermission: Boolean = true): List<Uri> = withContext(Dispatchers.IO) {
         protectAccess {
             requireContentUri(uri)
             require(DocumentsContract.isTreeUri(uri)) { "Choose an event folder using the folder picker." }
-            persistReadPermission(uri)
+            if (persistPermission) persistReadPermission(uri)
             val result = mutableListOf<Uri>()
             val pending = ArrayDeque<String>()
             val visited = mutableSetOf<String>()
@@ -71,7 +68,7 @@ class PhotoFiles(private val context: Context) {
                     DocumentsContract.Document.COLUMN_MIME_TYPE), null, null, null)?.use { cursor ->
                     while (cursor.moveToNext()) {
                         val childId = cursor.getString(0)
-                        val mime = cursor.getString(1)
+                        val mime = normalizeMimeType(cursor.getString(1))
                         if (mime == DocumentsContract.Document.MIME_TYPE_DIR) {
                             pending.add(childId)
                         } else if (mime in IMAGE_EXTENSIONS) {
@@ -318,6 +315,11 @@ class PhotoFiles(private val context: Context) {
 
     private fun requireContentUri(uri: Uri) {
         require(uri.scheme == "content") { "Choose photos using the Android photo or folder picker." }
+    }
+
+    private fun normalizeMimeType(mimeType: String?): String? = when (val normalized = mimeType?.lowercase()) {
+        "image/jpg" -> "image/jpeg"
+        else -> normalized
     }
 
     private fun verifyImage(openStream: () -> InputStream) {
