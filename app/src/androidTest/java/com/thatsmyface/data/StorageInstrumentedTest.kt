@@ -1,11 +1,18 @@
 package com.thatsmyface.data
 
 import android.content.ContentValues
+import android.content.Context
+import android.content.ContextWrapper
 import android.graphics.Bitmap
 import android.net.Uri
 import android.provider.MediaStore
+import android.util.AtomicFile
 import androidx.test.platform.app.InstrumentationRegistry
 import java.io.File
+import java.security.KeyStore
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.runBlocking
 import org.junit.Assert.*
 import org.junit.Test
@@ -14,39 +21,39 @@ class StorageInstrumentedTest {
     private val context get() = InstrumentationRegistry.getInstrumentation().targetContext
 
     @Test fun androidKeyStorePersistsEncryptedDataAndDeletionSurvivesRestart() = runBlocking {
-        val store = LocalStore(context)
-        store.clearAll()
+        val fixture = PrivateFixture(context)
+        val store = fixture.newStore()
         try {
             val profile = Profile(nickname = "Synthetic test", faceRefs = listOf(List(128) { 0.125f }))
             store.update { it.copy(profile = profile, events = listOf(Event(title = "Test", secret = "1".repeat(64), shareFaceData = true))) }
-            val encrypted = File(context.noBackupFilesDir, "local-state.v1.enc").readBytes()
+            val encrypted = fixture.stateFile.readBytes()
             assertFalse(encrypted.toString(Charsets.UTF_8).contains(profile.nickname))
-            val reopened = LocalStore(context)
+            val reopened = fixture.newStore()
             reopened.load()
             assertEquals(profile, reopened.state.value.profile)
             reopened.clearFaceData()
-            val afterFaceDeletion = LocalStore(context)
+            val afterFaceDeletion = fixture.newStore()
             afterFaceDeletion.load()
             assertTrue(afterFaceDeletion.state.value.profile!!.faceRefs.isEmpty())
             assertFalse(afterFaceDeletion.state.value.events.single().shareFaceData)
             afterFaceDeletion.clearAll()
-            val empty = LocalStore(context)
+            val empty = fixture.newStore()
             empty.load()
             assertEquals(AppState(), empty.state.value)
         } finally {
-            store.clearAll()
+            fixture.close()
         }
     }
 
     @Test fun corruptedLocalDataDoesNotBecomeAnEmptyWritableStore() = runBlocking {
-        val store = LocalStore(context)
-        store.clearAll()
+        val fixture = PrivateFixture(context)
+        val store = fixture.newStore()
         try {
             store.update { it.copy(profile = Profile(nickname = "Synthetic")) }
-            val file = File(context.noBackupFilesDir, "local-state.v1.enc")
+            val file = fixture.stateFile
             val corrupted = file.readBytes().apply { this[lastIndex] = (last().toInt() xor 1).toByte() }
             file.writeBytes(corrupted)
-            val reopened = LocalStore(context)
+            val reopened = fixture.newStore()
             try {
                 reopened.load()
                 fail("Corrupted state must not load")
@@ -60,8 +67,67 @@ class StorageInstrumentedTest {
                 assertArrayEquals(corrupted, file.readBytes())
             }
         } finally {
-            store.clearAll()
+            fixture.close()
         }
+    }
+
+    @Test fun interruptedAtomicWriteRestoresCommittedDataAndAllowsTheNextUpdate() = runBlocking {
+        val fixture = PrivateFixture(context)
+        try {
+            val store = fixture.newStore()
+            val committed = AppState(profile = Profile(nickname = "Committed fixture"))
+            store.update { committed }
+            val encrypted = fixture.stateFile.readBytes()
+            // Closing without finishWrite simulates a process dying before its write is committed.
+            AtomicFile(fixture.stateFile).startWrite().use { it.write(byteArrayOf(1, 2, 3)) }
+            val reopened = fixture.newStore()
+            reopened.load()
+            assertEquals(committed, reopened.state.value)
+            assertArrayEquals(encrypted, fixture.stateFile.readBytes())
+            val feedback = Feedback(note = "After interrupted write", version = "test")
+            reopened.update { it.copy(feedback = listOf(feedback)) }
+            val afterNextWrite = fixture.newStore()
+            afterNextWrite.load()
+            assertEquals(committed.copy(feedback = listOf(feedback)), afterNextWrite.state.value)
+        } finally { fixture.close() }
+    }
+
+    @Test fun concurrentLocalUpdatesRemainPresentAfterRestart() = runBlocking {
+        val fixture = PrivateFixture(context)
+        try {
+            val store = fixture.newStore()
+            val notes = List(24) { Feedback(id = "note-$it", note = "Synthetic note $it", version = "test") }
+            notes.map { note ->
+                async(Dispatchers.Default) { store.update { it.copy(feedback = it.feedback + note) } }
+            }.awaitAll()
+            assertEquals(notes.toSet(), store.state.value.feedback.toSet())
+            assertEquals(notes.size, store.state.value.feedback.size)
+            val reopened = fixture.newStore()
+            reopened.load()
+            assertEquals(store.state.value, reopened.state.value)
+        } finally { fixture.close() }
+    }
+
+    @Test fun explicitResetErasesTheKeySoAnOldEncryptedCopyCannotBeRestored() = runBlocking {
+        val fixture = PrivateFixture(context)
+        try {
+            val store = fixture.newStore()
+            store.update { it.copy(profile = Profile(nickname = "Reset fixture", faceRefs = listOf(List(128) { 0.25f }))) }
+            val encrypted = fixture.stateFile.readBytes()
+            store.clearAll()
+            assertEquals(AppState(), store.state.value)
+            assertFalse(fixture.stateFile.exists())
+            assertFalse(KeyStore.getInstance("AndroidKeyStore").apply { load(null) }.containsAlias(fixture.keyAlias))
+            fixture.stateFile.writeBytes(encrypted)
+            val reopened = fixture.newStore()
+            try {
+                reopened.load()
+                fail("Erased face data must not be recovered from an old encrypted file")
+            } catch (_: LocalDataException) {
+                assertEquals(AppState(), reopened.state.value)
+                assertArrayEquals(encrypted, fixture.stateFile.readBytes())
+            }
+        } finally { fixture.close() }
     }
 
     @Test fun originalBytesSurviveTransferAndRepeatedSaveDoesNotDuplicate() = runBlocking {
@@ -79,6 +145,12 @@ class StorageInstrumentedTest {
                 displayName = photo.displayName, mimeType = photo.mimeType, size = photo.size, sha256 = photo.sha256)
             received = files.saveReceived(temporary, transfer)
             assertEquals(received, files.saveReceived(temporary, transfer.copy(requestId = newId())))
+            val originalFile = temporary
+            val concurrentCopies = List(4) {
+                async { files.saveReceived(originalFile, transfer.copy(requestId = newId())) }
+            }.awaitAll()
+            assertEquals(setOf(received), concurrentCopies.toSet())
+            assertEquals(listOf(received), savedCopies(transfer))
             val saved = context.contentResolver.openInputStream(received)!!.use { it.readBytes() }
             assertArrayEquals(original, saved)
             assertArrayEquals(original, context.contentResolver.openInputStream(source)!!.use { it.readBytes() })
@@ -95,14 +167,50 @@ class StorageInstrumentedTest {
     }
 
     @Test fun revokedProviderAccessIsActionableAndBlocksSharing() = runBlocking {
+        val fixture = PrivateFixture(context)
         val photo = Photo(eventId = "event", uri = "content://com.thatsmyface.test.storagefixture/revoked",
             displayName = "synthetic.jpg", mimeType = "image/jpeg", size = 123, sha256 = "a".repeat(64))
-        val checked = PhotoFiles(context).checkAvailability(photo)
-        assertEquals(PhotoAvailability.PERMISSION_REVOKED, checked.availability)
-        assertNotNull(checked.error)
-        val state = AppState(events = listOf(Event(id = "event", title = "Test", secret = "b".repeat(64))),
-            photos = listOf(checked), peers = listOf(Peer("event", "friend", "Friend")))
-        assertFalse(state.canAccessPhoto("event", "friend", photo.id))
+        try {
+            val files = PhotoFiles(fixture.context)
+            val checked = files.checkAvailability(photo)
+            assertEquals(PhotoAvailability.PERMISSION_REVOKED, checked.availability)
+            assertNotNull(checked.error)
+            val state = AppState(events = listOf(Event(id = "event", title = "Test", secret = "b".repeat(64))),
+                photos = listOf(checked), peers = listOf(Peer("event", "friend", "Friend")))
+            assertFalse(state.canAccessPhoto("event", "friend", photo.id))
+            try {
+                files.outgoingSnapshot(photo)
+                fail("A revoked source must not produce an outgoing snapshot")
+            } catch (error: PhotoAccessException) {
+                assertEquals(PhotoAvailability.PERMISSION_REVOKED, error.availability)
+                assertTrue(File(fixture.context.cacheDir, "outgoing").listFiles()!!.isEmpty())
+            }
+        } finally { fixture.close() }
+    }
+
+    @Test fun sourceChangesAfterImportBlockSharingAndRemoveTheFailedSnapshot() = runBlocking {
+        val fixture = PrivateFixture(context)
+        val source = createSyntheticPhoto()
+        try {
+            val files = PhotoFiles(fixture.context)
+            val photo = files.importPhoto("changed-source-event", source, persistPermission = false)
+            val changed = context.contentResolver.openInputStream(source)!!.use { it.readBytes() } + byteArrayOf(7, 8, 9)
+            context.contentResolver.openOutputStream(source, "wt")!!.use { it.write(changed) }
+            val checked = files.checkAvailability(photo)
+            assertEquals(PhotoAvailability.CHANGED, checked.availability)
+            assertNotNull(checked.error)
+            try {
+                files.outgoingSnapshot(photo)
+                fail("A source edited after selection must be selected again before sharing")
+            } catch (error: PhotoAccessException) {
+                assertEquals(PhotoAvailability.CHANGED, error.availability)
+                assertTrue(File(fixture.context.cacheDir, "outgoing").listFiles()!!.isEmpty())
+                assertArrayEquals(changed, context.contentResolver.openInputStream(source)!!.use { it.readBytes() })
+            }
+        } finally {
+            context.contentResolver.delete(source, null, null)
+            fixture.close()
+        }
     }
 
     @Test fun savedCopyChecksDistinguishMissingChangedAndDeniedWithoutDeletingExistingBytes() = runBlocking {
@@ -168,6 +276,105 @@ class StorageInstrumentedTest {
         } finally {
             context.contentResolver.delete(source, null, null)
             temporary?.delete()
+        }
+    }
+
+    @Test fun retryRecoversBothCompleteAndTruncatedPendingCopiesWithoutDuplicates() = runBlocking {
+        val source = createSyntheticPhoto()
+        val files = PhotoFiles(context)
+        var temporary: File? = null
+        val transfers = mutableListOf<Transfer>()
+        try {
+            val photo = files.importPhoto("pending-save-event", source, persistPermission = false)
+            temporary = files.outgoingSnapshot(photo)
+            val original = temporary.readBytes()
+            for (truncated in listOf(false, true)) {
+                val transfer = Transfer(photo.eventId, "sender", newId(), "receiver", direction = TransferDirection.RECEIVE,
+                    displayName = photo.displayName, mimeType = photo.mimeType, size = photo.size, sha256 = photo.sha256)
+                transfers += transfer
+                val pending = files.saveReceived(temporary, transfer)
+                context.contentResolver.update(pending, ContentValues().apply { put(MediaStore.Images.Media.IS_PENDING, 1) }, null, null)
+                if (truncated) context.contentResolver.openOutputStream(pending, "wt")!!.use { it.write(original.copyOf(original.size / 2)) }
+                val restartedFiles = PhotoFiles(context)
+                val recovered = restartedFiles.saveReceived(temporary, transfer.copy(requestId = newId()))
+                if (!truncated) assertEquals(pending, recovered)
+                assertEquals(listOf(recovered), savedCopies(transfer))
+                assertArrayEquals(original, context.contentResolver.openInputStream(recovered)!!.use { it.readBytes() })
+                context.contentResolver.query(recovered, arrayOf(MediaStore.Images.Media.IS_PENDING), null, null, null)!!.use {
+                    assertTrue(it.moveToFirst())
+                    assertEquals(0, it.getInt(0))
+                }
+            }
+            assertArrayEquals(original, context.contentResolver.openInputStream(source)!!.use { it.readBytes() })
+        } finally {
+            transfers.flatMap(::savedCopies).forEach { context.contentResolver.delete(it, null, null) }
+            context.contentResolver.delete(source, null, null)
+            temporary?.delete()
+        }
+    }
+
+    @Test fun invalidIncomingBytesCreateNoSavedCopyAndAValidRetryStillWorks() = runBlocking {
+        val source = createSyntheticPhoto()
+        val files = PhotoFiles(context)
+        var temporary: File? = null
+        var received: Uri? = null
+        try {
+            val photo = files.importPhoto("invalid-save-event", source, persistPermission = false)
+            temporary = files.outgoingSnapshot(photo)
+            val original = temporary.readBytes()
+            val transfer = Transfer(photo.eventId, "sender", photo.id, "receiver", direction = TransferDirection.RECEIVE,
+                displayName = photo.displayName, mimeType = photo.mimeType, size = photo.size, sha256 = photo.sha256)
+            temporary.writeBytes(original.copyOf().apply { this[lastIndex] = (last().toInt() xor 1).toByte() })
+            try {
+                files.saveReceived(temporary, transfer)
+                fail("Bytes with a different checksum must not be saved")
+            } catch (_: IllegalArgumentException) {
+                assertTrue(savedCopies(transfer).isEmpty())
+            }
+            val notAnImage = byteArrayOf(1, 2, 3, 4)
+            temporary.writeBytes(notAnImage)
+            try {
+                files.saveReceived(temporary, transfer.copy(size = notAnImage.size.toLong(), sha256 = sha256(notAnImage)))
+                fail("A correct checksum does not make arbitrary bytes a photo")
+            } catch (_: IllegalArgumentException) {
+                assertTrue(savedCopies(transfer).isEmpty())
+            }
+            temporary.writeBytes(original)
+            received = files.saveReceived(temporary, transfer)
+            assertEquals(listOf(received), savedCopies(transfer))
+            assertArrayEquals(original, context.contentResolver.openInputStream(received)!!.use { it.readBytes() })
+            assertArrayEquals(original, context.contentResolver.openInputStream(source)!!.use { it.readBytes() })
+        } finally {
+            received?.let { context.contentResolver.delete(it, null, null) }
+            context.contentResolver.delete(source, null, null)
+            temporary?.delete()
+        }
+    }
+
+    @Suppress("DEPRECATION")
+    private fun savedCopies(transfer: Transfer): List<Uri> {
+        val collection = MediaStore.Images.Media.getContentUri(MediaStore.VOLUME_EXTERNAL_PRIMARY)
+        return context.contentResolver.query(MediaStore.setIncludePending(collection), arrayOf(MediaStore.Images.Media._ID),
+            "${MediaStore.Images.Media.DISPLAY_NAME} LIKE ? AND ${MediaStore.Images.Media.OWNER_PACKAGE_NAME} = ?",
+            arrayOf("TMF_${transfer.key}_%", context.packageName), null)!!.use { cursor ->
+            buildList {
+                while (cursor.moveToNext()) add(Uri.withAppendedPath(collection, cursor.getLong(0).toString()))
+            }
+        }
+    }
+
+    private class PrivateFixture(base: Context) {
+        private val root = File(base.cacheDir, "storage-tests/${newId()}").apply { mkdirs() }
+        val keyAlias = "thatsmyface.test.storage.${newId()}"
+        val context = object : ContextWrapper(base) {
+            override fun getNoBackupFilesDir(): File = File(root, "private").apply { mkdirs() }
+            override fun getCacheDir(): File = File(root, "cache").apply { mkdirs() }
+        }
+        val stateFile get() = File(context.noBackupFilesDir, "local-state.v1.enc")
+        fun newStore() = LocalStore(context, keyAlias)
+        suspend fun close() {
+            newStore().clearAll()
+            root.deleteRecursively()
         }
     }
 
