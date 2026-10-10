@@ -39,6 +39,7 @@ internal fun FriendsPage(model: AppModel, state: AppState, event: Event?, busy: 
     var explanation by remember { mutableStateOf(false) }
     var denied by remember { mutableStateOf(false) }
     var revoking by remember { mutableStateOf<Peer?>(null) }
+    var managingAccess by remember(event?.id) { mutableStateOf(false) }
     val permissions = rememberLauncherForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) {
         denied = NearbyPermissions.missing(context).isNotEmpty()
         if (!denied) model.startSharing()
@@ -47,20 +48,20 @@ internal fun FriendsPage(model: AppModel, state: AppState, event: Event?, busy: 
     val sharing = active && event?.id == sessionEvent
     Page {
         item { Panel(if (sharing) "Ready for your friends" else "Bring your phones together",
-            "Open the same event on both phones. Keep Bluetooth and Wi-Fi on, and keep both apps open. Sharing pauses when you leave the app.") {
+            "Have friends join this event using its QR invitation. Start sharing on each phone with Bluetooth and Wi-Fi on. The screen stays awake while sharing. Leaving the app, locking the phone yourself, or opening a photo picker stops sharing. Return here to restart and compare the code again on both phones.") {
             if (event == null) Text("Choose an event in Events first.")
             else if (sharing) {
                 Text("Sharing session: ${event.title}", color = MaterialTheme.colorScheme.primary)
                 OutlinedButton(onClick = model::stopSharing, modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp)) { Text("Stop sharing") }
                 OutlinedButton(onClick = model::refreshFriends, enabled = !busy,
-                    modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp)) { Text("Refresh shared photos") }
+                    modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp)) { Text("Resend my event photos") }
             } else Button(onClick = { explanation = true }, enabled = !busy,
                 modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp)) { Text("Start nearby sharing") }
             if (denied) OutlinedButton(onClick = {
                 context.startActivity(Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS, Uri.parse("package:${context.packageName}")))
             }, modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp)) { Text("Open app permissions") }
         } }
-        if (sharing && nearby.isEmpty()) item { Panel("Looking for friends", "Ask a friend to join this event and tap Start nearby sharing. On Android 12 and earlier, location services may also need to be on.") }
+        if (sharing && nearby.isEmpty()) item { Panel("Looking for friends", "On your friend's phone, open the event joined through your QR invitation and tap Start nearby sharing. An event with the same name is not enough. Keep both apps open. On Android 12 and earlier, location services may also need to be on.") }
         items(nearby, key = { it.endpointId }) { peer ->
             Panel(peer.nickname, when (peer.status) {
                 PeerStatus.DISCOVERED -> "Nearby phone, not verified yet"
@@ -88,9 +89,14 @@ internal fun FriendsPage(model: AppModel, state: AppState, event: Event?, busy: 
             }
         }
         val savedPeers = state.peers.filter { it.eventId == event?.id }
-        if (savedPeers.isNotEmpty()) item { Text("Event access", style = MaterialTheme.typography.titleMedium) }
-        items(savedPeers, key = { it.peerId }) { peer ->
-            Panel(peer.nickname, if (peer.allowed) "Previously verified. Each new connection still needs a code check." else "Access removed") {
+        if (savedPeers.isNotEmpty()) item {
+            OutlinedButton(onClick = { managingAccess = !managingAccess },
+                modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp)) {
+                Text(if (managingAccess) "Hide event access" else "Manage event access (${savedPeers.size})")
+            }
+        }
+        items(if (managingAccess) savedPeers else emptyList(), key = { it.peerId }) { peer ->
+            Panel(peer.nickname, if (peer.allowed) "Allowed in this event. Connection status is shown above." else "Access removed") {
                 if (peer.allowed) TextButton(onClick = { revoking = peer }, enabled = !busy,
                     modifier = Modifier.heightIn(min = 48.dp)) { Text("Remove future access") }
             }

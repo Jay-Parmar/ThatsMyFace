@@ -318,7 +318,7 @@ class SharingSession(
                 }
                 if (recognitionFailed) notify("Some face matches could not be checked. Retry discovery or use manual tags for those photos.")
             } catch (cancelled: CancellationException) { throw cancelled }
-            catch (_: Exception) { notify("Some previews could not be shared. Check photo access and tap refresh.") }
+            catch (_: Exception) { notify("Some previews could not be shared. Check photo access and resend your event photos from Friends.") }
         }
     }
 
@@ -390,7 +390,7 @@ class SharingSession(
         }
         if (!beginTransfer(Transfer(request.eventId, me, photo.id, peer, requestId = request.requestId, direction = TransferDirection.SEND,
             status = TransferStatus.AWAITING_APPROVAL, displayName = photo.displayName, mimeType = photo.mimeType, size = photo.size, sha256 = photo.sha256))) return
-        notify("${current.peers.find { it.eventId == request.eventId && it.peerId == peer }?.nickname ?: "A friend"} requested an original. Review it in Downloads.")
+        notify("${current.peers.find { it.eventId == request.eventId && it.peerId == peer }?.nickname ?: "A friend"} requested an original. Review it in Photos > Requested.")
     }
 
     suspend fun approve(request: Transfer) {
@@ -437,7 +437,8 @@ class SharingSession(
 
     suspend fun reject(transfer: Transfer) {
         val latest = current.transfers.find { it.key == transfer.key && it.requestId == transfer.requestId } ?: return
-        if (latest.direction != TransferDirection.SEND || latest.status != TransferStatus.AWAITING_APPROVAL) return
+        if (latest.direction != TransferDirection.SEND || latest.approved ||
+            latest.status !in setOf(TransferStatus.AWAITING_APPROVAL, TransferStatus.WAITING, TransferStatus.FAILED)) return
         if (!changeTransfer(latest, latest.copy(status = TransferStatus.REJECTED, approved = false, error = "Owner declined this request."))) return
         endpointFor(latest.eventId, latest.receiverId)?.let { transport.sendMessage(it, WireMessage.Decision(latest.eventId, latest.requestId, latest.photoId, false, "Owner declined this request.")) }
     }

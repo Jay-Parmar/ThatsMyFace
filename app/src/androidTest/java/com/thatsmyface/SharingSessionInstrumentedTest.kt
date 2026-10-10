@@ -47,6 +47,23 @@ import org.junit.Assert.*
 import org.junit.Test
 
 class SharingSessionInstrumentedTest {
+    @Test fun ownerCanDeclineAnUnapprovedRequestAfterDisconnection() = runBlocking {
+        val fixture = Fixture()
+        try {
+            fixture.initialize()
+            fixture.pair()
+            fixture.request()
+            withContext(Dispatchers.Main) { fixture.receiver.stop() }
+            fixture.await { fixture.ownerTransfer().status == TransferStatus.WAITING }
+            assertFalse(fixture.ownerTransfer().approved)
+            withContext(Dispatchers.Main) { fixture.owner.reject(fixture.ownerTransfer()) }
+            assertEquals(TransferStatus.REJECTED, fixture.ownerTransfer().status)
+            assertFalse(fixture.ownerTransfer().approved)
+            assertEquals(0, fixture.ownerLink.filesSent)
+            assertArrayEquals(fixture.original, fixture.read(fixture.source))
+        } finally { fixture.close() }
+    }
+
     @Test fun approvedOriginalTraversesRealSessionStoresAndMediaStoreWithoutDuplicates() = runBlocking {
         val fixture = Fixture()
         try {

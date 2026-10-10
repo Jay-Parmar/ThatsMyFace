@@ -3,21 +3,24 @@ package com.thatsmyface.ui
 import android.Manifest
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
-import androidx.compose.foundation.Image
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
+import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.grid.GridItemSpan
+import androidx.compose.foundation.lazy.grid.items
 import androidx.compose.foundation.selection.toggleable
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.Checkbox
+import androidx.compose.material3.FilterChip
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Text
@@ -25,30 +28,28 @@ import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
-import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.graphics.ImageBitmap
-import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.unit.dp
 import com.thatsmyface.AppModel
 import com.thatsmyface.data.AppState
 import com.thatsmyface.data.Event
-import com.thatsmyface.data.Photo
 import com.thatsmyface.data.PhotoAvailability
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.withContext
 
 @Composable
+@OptIn(ExperimentalLayoutApi::class)
 internal fun LocalPhotosPage(model: AppModel, state: AppState, event: Event, busy: Boolean) {
     var policy by rememberSaveable { mutableStateOf<String?>(null) }
     var pendingPicker by rememberSaveable { mutableStateOf<String?>(null) }
     var importEventId by rememberSaveable { mutableStateOf<String?>(null) }
     var tagging by remember { mutableStateOf<String?>(null) }
+    var selectedPhoto by rememberSaveable(event.id) { mutableStateOf<String?>(null) }
+    var showOptions by rememberSaveable(event.id) { mutableStateOf(false) }
+    var needsAttention by rememberSaveable(event.id) { mutableStateOf(false) }
     val picker = rememberLauncherForActivityResult(ActivityResultContracts.OpenMultipleDocuments()) { uris ->
         if (uris.isNotEmpty()) model.importPhotos(importEventId, uris)
         importEventId = null
@@ -65,34 +66,73 @@ internal fun LocalPhotosPage(model: AppModel, state: AppState, event: Event, bus
         pendingPicker = null
     }
     val photos = state.photos.filter { it.eventId == event.id }
-    Page {
-        item { Panel("Your event photos", "Only the photos you choose belong here. Your full gallery is never scanned.") {
-            Button(onClick = { importEventId = event.id; policy = "photos" }, enabled = !busy,
-                modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp)) { Text("Choose photos") }
-            OutlinedButton(onClick = { importEventId = event.id; policy = "folder" }, enabled = !busy,
-                modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp)) { Text("Choose an event folder") }
-            if (photos.isNotEmpty() || event.folderUri != null) OutlinedButton(onClick = model::rescan, enabled = !busy,
-                modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp)) { Text("Check photos and rescan folder") }
-            if (event.folderUri != null) Text("A folder is linked. Rescan reads that folder and its subfolders only.",
-                style = MaterialTheme.typography.bodySmall)
-            if (photos.isNotEmpty()) OutlinedButton(onClick = model::scanFaces, enabled = !busy,
-                modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp)) { Text("Find faces in selected photos") }
-        } }
-        if (photos.isEmpty()) item { Panel("The night starts here", "Add the photos you want your verified event friends to find. You can add more after the next stop.") }
-        items(photos, key = { it.id }) { photo ->
-            Panel(photo.displayName, if (photo.availability == PhotoAvailability.AVAILABLE) "Original stays on this phone" else photo.error) {
-                LocalThumbnail(model, photo)
-                val names = photo.manualPersonIds.mapNotNull { id ->
-                    if (id == state.profile?.id) "You" else state.peers.find { it.peerId == id && it.eventId == event.id }?.nickname
+    val unavailableCount = photos.count { it.availability != PhotoAvailability.AVAILABLE }
+    val visiblePhotos = if (needsAttention) photos.filter { it.availability != PhotoAvailability.AVAILABLE } else photos
+    PhotoGrid {
+        item(span = { GridItemSpan(maxLineSpan) }) {
+            Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                Text("${photos.size} event photos", style = MaterialTheme.typography.titleLarge)
+                Text("Chosen by you. Originals stay on this phone.", style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant)
+                FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Button(onClick = { importEventId = event.id; policy = "photos" }, enabled = !busy,
+                        modifier = Modifier.heightIn(min = 48.dp)) { Text("Choose photos") }
+                    TextButton(onClick = { showOptions = !showOptions }, modifier = Modifier.heightIn(min = 48.dp)) {
+                        Text(if (showOptions) "Hide options" else "Library options")
+                    }
                 }
-                if (names.isNotEmpty()) Text("Tagged: ${names.joinToString()}", style = MaterialTheme.typography.bodyMedium)
-                OutlinedButton(onClick = { tagging = photo.id }, enabled = !busy,
-                    modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp)) { Text("Tag or correct people") }
-                TextButton(onClick = { model.removePhoto(photo) }, enabled = !busy,
-                    modifier = Modifier.heightIn(min = 48.dp)) { Text("Remove from event") }
+                if (showOptions) {
+                    if (photos.isNotEmpty()) OutlinedButton(onClick = model::scanFaces, enabled = !busy,
+                        modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp)) { Text("Find faces in selected photos") }
+                    OutlinedButton(onClick = { importEventId = event.id; policy = "folder" }, enabled = !busy,
+                        modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp)) { Text("Choose an event folder") }
+                    if (photos.isNotEmpty() || event.folderUri != null) OutlinedButton(onClick = model::rescan, enabled = !busy,
+                        modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp)) { Text("Check photos and rescan folder") }
+                    Text(if (event.folderUri != null) "A folder is linked. Rescan reads that folder and its subfolders only."
+                        else "Only selected photos or a chosen folder are read. Your full gallery is never scanned.",
+                        style = MaterialTheme.typography.bodySmall)
+                }
+            }
+        }
+        if (photos.isNotEmpty()) item(span = { GridItemSpan(maxLineSpan) }) {
+            FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                FilterChip(selected = !needsAttention, onClick = { needsAttention = false },
+                    label = { Text("All ${photos.size}") }, modifier = Modifier.heightIn(min = 48.dp))
+                FilterChip(selected = needsAttention, onClick = { needsAttention = true },
+                    label = { Text("Check $unavailableCount") }, modifier = Modifier.heightIn(min = 48.dp))
+            }
+        }
+        if (photos.isEmpty()) item(span = { GridItemSpan(maxLineSpan) }) {
+            Panel("The night starts here", "Add the photos you want your verified event friends to find. You can add more after the next stop.")
+        }
+        else if (visiblePhotos.isEmpty()) item(span = { GridItemSpan(maxLineSpan) }) {
+            Panel("Nothing to check", "No selected photos currently need attention.")
+        }
+        items(visiblePhotos, key = { it.id }) { photo ->
+            val label = if (photo.availability != PhotoAvailability.AVAILABLE) "Check access"
+                else if (photo.manualPersonIds.isNotEmpty()) "Tagged" else "On your phone"
+            PhotoTile(photo.displayName, label, photo.displayName, onClick = { selectedPhoto = photo.id }) {
+                LocalPhotoPreview(model, photo, it)
             }
         }
     }
+    selectedPhoto?.let { id -> photos.find { it.id == id }?.let { photo ->
+        PhotoDetails(photo.displayName, onDismiss = { selectedPhoto = null }) {
+            LocalPhotoPreview(model, photo, Modifier.fillMaxWidth().height(280.dp), detailed = true)
+            Text(if (photo.availability == PhotoAvailability.AVAILABLE) "Original stays on this phone. Verified friends can see its preview; each original needs your approval."
+                else photo.error ?: "This photo is unavailable. Select it again to restore access.")
+            val names = photo.manualPersonIds.mapNotNull { personId ->
+                if (personId == state.profile?.id) "You" else state.peers.find { it.peerId == personId && it.eventId == event.id }?.nickname
+            }
+            if (names.isNotEmpty()) Text("Tagged: ${names.joinToString()}", color = MaterialTheme.colorScheme.secondary)
+            OutlinedButton(onClick = { tagging = photo.id }, enabled = !busy,
+                modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp)) { Text("Tag or correct people") }
+            TextButton(onClick = { selectedPhoto = null; model.removePhoto(photo) }, enabled = !busy,
+                modifier = Modifier.heightIn(min = 48.dp)) { Text("Remove from event") }
+            Text("Removing from this event never deletes your original.", style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant)
+        }
+    } }
     if (policy != null) AlertDialog(onDismissRequest = { policy = null }, title = { Text("Choose what friends can find") },
         text = { Text("Verified friends in this event can see previews of these photos. Every original download needs your approval. " +
             "Originals can contain location and camera metadata; Android may ask permission to preserve these bytes. " +
@@ -122,26 +162,3 @@ internal fun LocalPhotosPage(model: AppModel, state: AppState, event: Event, bus
             } }, confirmButton = { TextButton(onClick = { tagging = null }) { Text("Done") } })
     } }
 }
-
-@Composable
-private fun LocalThumbnail(model: AppModel, photo: Photo) {
-    val preview by produceState(PreviewState(), photo.uri, photo.availability) {
-        val loaded = withContext(Dispatchers.IO) {
-            runCatching {
-                model.files.thumbnail(photo)?.let { encoded ->
-                    decodePreview(encoded)
-                }
-            }.getOrNull()
-        }
-        value = PreviewState(loaded, false)
-    }
-    if (preview.image != null) Image(requireNotNull(preview.image), "Preview of ${photo.displayName}",
-        Modifier.fillMaxWidth().height(200.dp), contentScale = ContentScale.Fit)
-    else Text(when {
-        preview.loading -> "Loading preview"
-        photo.availability == PhotoAvailability.AVAILABLE -> "Preview unavailable. Check photo access or choose the file again."
-        else -> "Preview unavailable. Select the photo again to restore access."
-    }, style = MaterialTheme.typography.bodySmall)
-}
-
-private data class PreviewState(val image: ImageBitmap? = null, val loading: Boolean = true)

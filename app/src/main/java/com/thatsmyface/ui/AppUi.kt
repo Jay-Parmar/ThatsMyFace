@@ -14,6 +14,8 @@ import androidx.compose.foundation.lazy.LazyListScope
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Button
 import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.Badge
+import androidx.compose.material3.BadgedBox
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.CircularProgressIndicator
@@ -41,9 +43,11 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.res.painterResource
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.thatsmyface.AppModel
+import com.thatsmyface.R
 
 @Composable
 fun ThatsMyFaceApp(model: AppModel) {
@@ -54,6 +58,7 @@ fun ThatsMyFaceApp(model: AppModel) {
     val message by model.message.collectAsStateWithLifecycle()
     val eventId by model.selectedEventId.collectAsStateWithLifecycle()
     val selectedEvent = state.events.find { it.id == eventId }
+    val approvals = state.transfers.count { it.eventId == selectedEvent?.id && it.needsOwnerDecision() }
     var tab by rememberSaveable { mutableIntStateOf(0) }
     var resetConfirmation by remember { mutableStateOf(false) }
     val snackbar = remember { SnackbarHostState() }
@@ -65,6 +70,7 @@ fun ThatsMyFaceApp(model: AppModel) {
     }
     MaterialTheme(colorScheme = darkColorScheme(
         primary = Color(0xFFD7EC92), onPrimary = Color(0xFF203000), secondary = Color(0xFFAEDFD5),
+        primaryContainer = Color(0xFF34431B), onPrimaryContainer = Color(0xFFE1F3AA),
         secondaryContainer = Color(0xFF2B4039), onSecondaryContainer = Color(0xFFD2F1E7),
         background = Color(0xFF101410), surface = Color(0xFF171D17), surfaceVariant = Color(0xFF293127),
         onSurface = Color(0xFFF0F3E9), onSurfaceVariant = Color(0xFFC3CCBB),
@@ -72,19 +78,21 @@ fun ThatsMyFaceApp(model: AppModel) {
         Surface(Modifier.fillMaxSize()) {
             Scaffold(topBar = {
                 Column(Modifier.fillMaxWidth().statusBarsPadding().padding(20.dp, 12.dp)) {
-                    Text("ThatsMyFace", style = MaterialTheme.typography.headlineMedium)
+                    Text("ThatsMyFace", style = MaterialTheme.typography.titleLarge)
                     Text(selectedEvent?.title ?: "If you're in it, find it.",
-                        style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.secondary)
+                        style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.secondary,
+                        maxLines = 1, overflow = TextOverflow.Ellipsis)
                     if (busy) LinearProgressIndicator(Modifier.fillMaxWidth().padding(top = 10.dp))
                 }
             }, snackbarHost = { SnackbarHost(snackbar) }, bottomBar = {
                 if (state.profile != null) NavigationBar(containerColor = MaterialTheme.colorScheme.surface) {
                     val labels = listOf("Events", "Photos", "Friends", "You")
-                    val icons = listOf(android.R.drawable.ic_menu_my_calendar,
-                        android.R.drawable.ic_menu_gallery, android.R.drawable.ic_menu_share, android.R.drawable.ic_menu_manage)
+                    val icons = listOf(R.drawable.ic_events, R.drawable.ic_photos, R.drawable.ic_friends, R.drawable.ic_profile)
                     labels.forEachIndexed { index, label ->
                         NavigationBarItem(selected = tab == index, onClick = { tab = index },
-                            icon = { Icon(painterResource(icons[index]), contentDescription = null) },
+                            icon = { BadgedBox(badge = {
+                                if (index == 1 && approvals > 0) Badge { Text(approvals.toString()) }
+                            }) { Icon(painterResource(icons[index]), contentDescription = null) } },
                             label = { Text(label) })
                     }
                 }
