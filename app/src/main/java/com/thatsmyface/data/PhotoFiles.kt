@@ -115,9 +115,16 @@ class PhotoFiles(private val context: Context) {
         }
     }
 
-    suspend fun thumbnail(photo: Photo): String? = withContext(Dispatchers.IO) {
+    suspend fun thumbnail(photo: Photo): String? = thumbnail(Uri.parse(photo.uri))
+
+    suspend fun savedThumbnail(transfer: Transfer): String? {
+        if (transfer.direction != TransferDirection.RECEIVE || transfer.status != TransferStatus.COMPLETE) return null
+        val uri = transfer.savedUri?.let(Uri::parse) ?: return null
+        return thumbnail(uri)
+    }
+
+    private suspend fun thumbnail(uri: Uri): String? = withContext(Dispatchers.IO) {
         protectAccess {
-            val uri = Uri.parse(photo.uri)
             requireContentUri(uri)
             val bitmap = ImageDecoder.decodeBitmap(ImageDecoder.createSource(resolver, uri)) { decoder, info, _ ->
                 val width = info.size.width
@@ -157,16 +164,17 @@ class PhotoFiles(private val context: Context) {
             val name = "TMF_${transfer.key}_${transfer.sha256.take(16)}.${IMAGE_EXTENSIONS.getValue(transfer.mimeType)}"
             val collection = MediaStore.Images.Media.getContentUri(MediaStore.VOLUME_EXTERNAL_PRIMARY)
             val existing = findSaved(collection, name)
-            if (existing != null) {
-                val valid = runCatching { open(existing.first).use { digest(it) } }.getOrNull()
-                if (valid?.sha256 == transfer.sha256 && valid.size == transfer.size) {
-                    check(canPublish()) { "Download cancelled or access removed." }
-                    publish(existing.first)
-                    return@withLock existing.first
-                }
-                check(existing.second) { "A previously saved copy changed. Keep it safe and remove it manually before retrying." }
-                resolver.delete(existing.first, null, null)
+            val valid = existing.firstOrNull { (uri, _) ->
+                val actual = runCatching { open(uri).use { digest(it) } }.getOrNull()
+                actual?.sha256 == transfer.sha256 && actual.size == transfer.size
             }
+            if (valid != null) {
+                check(canPublish()) { "Download cancelled or access removed." }
+                publish(valid.first)
+                return@withLock valid.first
+            }
+            check(existing.all { it.second }) { "A previously saved copy changed. Keep it safe and remove it manually before retrying." }
+            existing.forEach { (uri, _) -> resolver.delete(uri, null, null) }
             val values = ContentValues().apply {
                 put(MediaStore.Images.Media.DISPLAY_NAME, name)
                 put(MediaStore.Images.Media.MIME_TYPE, transfer.mimeType)
@@ -298,13 +306,16 @@ class PhotoFiles(private val context: Context) {
         "Allow original photo metadata in Photos before importing or sharing. This keeps original bytes, including location metadata.")
 
     @Suppress("DEPRECATION")
-    private fun findSaved(collection: Uri, name: String): Pair<Uri, Boolean>? {
-        val selection = "${MediaStore.Images.Media.DISPLAY_NAME} = ? AND ${MediaStore.Images.Media.RELATIVE_PATH} = ? AND ${MediaStore.Images.Media.OWNER_PACKAGE_NAME} = ?"
+    private fun findSaved(collection: Uri, name: String): List<Pair<Uri, Boolean>> {
+        // Old copies stay where the user saved them, including saves interrupted before an upgrade.
+        val selection = "${MediaStore.Images.Media.DISPLAY_NAME} = ? AND ${MediaStore.Images.Media.RELATIVE_PATH} IN (?, ?) AND ${MediaStore.Images.Media.OWNER_PACKAGE_NAME} = ?"
         return resolver.query(MediaStore.setIncludePending(collection),
             arrayOf(MediaStore.Images.Media._ID, MediaStore.Images.Media.IS_PENDING), selection,
-            arrayOf(name, DESTINATION, context.packageName), null)?.use { cursor ->
-            if (cursor.moveToFirst()) Uri.withAppendedPath(collection, cursor.getLong(0).toString()) to (cursor.getInt(1) == 1) else null
-        }
+            arrayOf(name, DESTINATION, LEGACY_DESTINATION, context.packageName), null)?.use { cursor ->
+            buildList {
+                while (cursor.moveToNext()) add(Uri.withAppendedPath(collection, cursor.getLong(0).toString()) to (cursor.getInt(1) == 1))
+            }
+        } ?: emptyList()
     }
 
     private fun publish(uri: Uri) {
@@ -347,7 +358,8 @@ class PhotoFiles(private val context: Context) {
     }
 
     private companion object {
-        const val DESTINATION = "Pictures/ThatsMyFace/"
+        const val DESTINATION = "Pictures/ThatsMyFace/Requested/"
+        private const val LEGACY_DESTINATION = "Pictures/ThatsMyFace/"
         const val MAX_FOLDER_ITEMS = 2_000
         val SYSTEM_DOCUMENT_PROVIDERS = setOf("com.android.providers.media.documents", "com.android.externalstorage.documents")
         val IMAGE_EXTENSIONS = mapOf("image/jpeg" to "jpg", "image/png" to "png", "image/webp" to "webp",

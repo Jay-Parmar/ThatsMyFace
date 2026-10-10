@@ -151,6 +151,7 @@ class StorageInstrumentedTest {
             val transfer = Transfer("test-event", "sender", photo.id, "receiver", direction = TransferDirection.RECEIVE,
                 displayName = photo.displayName, mimeType = photo.mimeType, size = photo.size, sha256 = photo.sha256)
             received = files.saveReceived(temporary, transfer)
+            assertEquals("Pictures/ThatsMyFace/Requested/", relativePath(received))
             assertEquals(received, files.saveReceived(temporary, transfer.copy(requestId = newId())))
             val originalFile = temporary
             val concurrentCopies = List(4) {
@@ -166,6 +167,8 @@ class StorageInstrumentedTest {
             val unavailable = files.checkAvailability(photo)
             assertTrue(unavailable.availability in setOf(PhotoAvailability.MISSING, PhotoAvailability.PERMISSION_REVOKED))
             assertNotNull(unavailable.error)
+            val completed = transfer.copy(status = TransferStatus.COMPLETE, savedUri = received.toString())
+            assertNotNull(files.savedThumbnail(completed))
         } finally {
             if (!sourceDeleted) context.contentResolver.delete(source, null, null)
             received?.let { context.contentResolver.delete(it, null, null) }
@@ -295,26 +298,70 @@ class StorageInstrumentedTest {
             val photo = files.importPhoto("pending-save-event", source, persistPermission = false)
             temporary = files.outgoingSnapshot(photo)
             val original = temporary.readBytes()
-            for (truncated in listOf(false, true)) {
-                val transfer = Transfer(photo.eventId, "sender", newId(), "receiver", direction = TransferDirection.RECEIVE,
-                    displayName = photo.displayName, mimeType = photo.mimeType, size = photo.size, sha256 = photo.sha256)
-                transfers += transfer
-                val pending = files.saveReceived(temporary, transfer)
-                context.contentResolver.update(pending, ContentValues().apply { put(MediaStore.Images.Media.IS_PENDING, 1) }, null, null)
-                if (truncated) context.contentResolver.openOutputStream(pending, "wt")!!.use { it.write(original.copyOf(original.size / 2)) }
-                val restartedFiles = PhotoFiles(context)
-                val recovered = restartedFiles.saveReceived(temporary, transfer.copy(requestId = newId()))
-                if (!truncated) assertEquals(pending, recovered)
-                assertEquals(listOf(recovered), savedCopies(transfer))
-                assertArrayEquals(original, context.contentResolver.openInputStream(recovered)!!.use { it.readBytes() })
-                context.contentResolver.query(recovered, arrayOf(MediaStore.Images.Media.IS_PENDING), null, null, null)!!.use {
-                    assertTrue(it.moveToFirst())
-                    assertEquals(0, it.getInt(0))
+            for (destination in listOf("Pictures/ThatsMyFace/Requested/", "Pictures/ThatsMyFace/")) {
+                for (truncated in listOf(false, true)) {
+                    val transfer = Transfer(photo.eventId, "sender", newId(), "receiver", direction = TransferDirection.RECEIVE,
+                        displayName = photo.displayName, mimeType = photo.mimeType, size = photo.size, sha256 = photo.sha256)
+                    transfers += transfer
+                    val pending = files.saveReceived(temporary, transfer)
+                    context.contentResolver.update(pending, ContentValues().apply {
+                        put(MediaStore.Images.Media.RELATIVE_PATH, destination)
+                        put(MediaStore.Images.Media.IS_PENDING, 1)
+                    }, null, null)
+                    if (truncated) context.contentResolver.openOutputStream(pending, "wt")!!.use { it.write(original.copyOf(original.size / 2)) }
+                    val restartedFiles = PhotoFiles(context)
+                    val recovered = restartedFiles.saveReceived(temporary, transfer.copy(requestId = newId()))
+                    if (!truncated) assertEquals(pending, recovered)
+                    assertEquals(listOf(recovered), savedCopies(transfer))
+                    assertEquals(if (truncated) "Pictures/ThatsMyFace/Requested/" else destination, relativePath(recovered))
+                    assertArrayEquals(original, context.contentResolver.openInputStream(recovered)!!.use { it.readBytes() })
+                    context.contentResolver.query(recovered, arrayOf(MediaStore.Images.Media.IS_PENDING), null, null, null)!!.use {
+                        assertTrue(it.moveToFirst())
+                        assertEquals(0, it.getInt(0))
+                    }
                 }
             }
             assertArrayEquals(original, context.contentResolver.openInputStream(source)!!.use { it.readBytes() })
         } finally {
             transfers.flatMap(::savedCopies).forEach { context.contentResolver.delete(it, null, null) }
+            context.contentResolver.delete(source, null, null)
+            temporary?.delete()
+        }
+    }
+
+    @Test fun retryReusesALegacyPublishedCopyAndNeverReplacesUserEdits() = runBlocking {
+        val source = createSyntheticPhoto()
+        var temporary: File? = null
+        var received: Uri? = null
+        try {
+            val files = PhotoFiles(context)
+            val photo = files.importPhoto("legacy-save-event", source, persistPermission = false)
+            temporary = files.outgoingSnapshot(photo)
+            val original = temporary.readBytes()
+            val transfer = Transfer(photo.eventId, "sender", photo.id, "receiver", direction = TransferDirection.RECEIVE,
+                displayName = photo.displayName, mimeType = photo.mimeType, size = photo.size, sha256 = photo.sha256)
+            received = files.saveReceived(temporary, transfer)
+            context.contentResolver.update(received, ContentValues().apply {
+                put(MediaStore.Images.Media.RELATIVE_PATH, "Pictures/ThatsMyFace/")
+            }, null, null)
+            val restartedFiles = PhotoFiles(context)
+            assertEquals(received, restartedFiles.saveReceived(temporary, transfer.copy(requestId = newId())))
+            assertEquals("Pictures/ThatsMyFace/", relativePath(received))
+            assertEquals(listOf(received), savedCopies(transfer))
+            assertArrayEquals(original, context.contentResolver.openInputStream(received)!!.use { it.readBytes() })
+            val changed = original + byteArrayOf(1, 2, 3)
+            context.contentResolver.openOutputStream(received, "wt")!!.use { it.write(changed) }
+            try {
+                restartedFiles.saveReceived(temporary, transfer.copy(requestId = newId()))
+                fail("A changed legacy copy must not be replaced by a new download")
+            } catch (_: IllegalStateException) {
+                assertEquals(listOf(received), savedCopies(transfer))
+                assertEquals("Pictures/ThatsMyFace/", relativePath(received))
+                assertArrayEquals(changed, context.contentResolver.openInputStream(received)!!.use { it.readBytes() })
+            }
+            assertArrayEquals(original, context.contentResolver.openInputStream(source)!!.use { it.readBytes() })
+        } finally {
+            received?.let { context.contentResolver.delete(it, null, null) }
             context.contentResolver.delete(source, null, null)
             temporary?.delete()
         }
@@ -401,6 +448,12 @@ class StorageInstrumentedTest {
                 while (cursor.moveToNext()) add(Uri.withAppendedPath(collection, cursor.getLong(0).toString()))
             }
         }
+    }
+
+    private fun relativePath(uri: Uri): String = context.contentResolver.query(uri,
+        arrayOf(MediaStore.Images.Media.RELATIVE_PATH), null, null, null)!!.use {
+        assertTrue(it.moveToFirst())
+        it.getString(0)
     }
 
     private class FolderProvider(private val image: File) : ContentProvider() {
