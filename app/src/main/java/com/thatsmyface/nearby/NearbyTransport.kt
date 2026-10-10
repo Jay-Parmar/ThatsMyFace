@@ -81,6 +81,7 @@ class NearbyTransport(context: Context, private val scope: CoroutineScope) : Nea
     private val incoming = mutableMapOf<Long, Payload>()
     private val outgoing = mutableMapOf<Long, PreparedFile>()
     private val payloadPeers = mutableMapOf<Long, String>()
+    private val messageDeliveries = MessageDeliveryTracker()
 
     override suspend fun start(eventId: String, nickname: String) {
         WireCodec.requireId(eventId)
@@ -108,6 +109,7 @@ class NearbyTransport(context: Context, private val scope: CoroutineScope) : Nea
 
     override fun stop() {
         generation++
+        messageDeliveries.clear()
         if (eventId != null) {
             client.stopAdvertising()
             client.stopDiscovery()
@@ -176,7 +178,20 @@ class NearbyTransport(context: Context, private val scope: CoroutineScope) : Nea
     override suspend fun sendMessage(endpointId: String, message: WireMessage) {
         check(message.eventId == eventId) { "Wrong event" }
         requireConnection(endpointId, message is WireMessage.Hello)
-        client.sendPayload(endpointId, Payload.fromBytes(WireCodec.encode(message))).awaitResult()
+        val session = generation
+        val payload = Payload.fromBytes(WireCodec.encode(message))
+        try {
+            messageDeliveries.send(endpointId, payload.id,
+                enqueue = { client.sendPayload(endpointId, payload).awaitResult() },
+                cancel = { client.cancelPayload(payload.id) })
+        } catch (failure: Exception) {
+            if (failure is CancellationException) throw failure
+            if (session == generation && peer(endpointId) != null) {
+                disconnect(endpointId)
+                emit(TransportEvent.Error(endpointId, "A sharing message could not be delivered. Reconnect on both phones and retry."))
+            }
+            throw IllegalStateException("A sharing message could not be delivered. Reconnect and retry.", failure)
+        }
     }
 
     override fun prepareFile(file: File): PreparedFile = PreparedFile(Payload.fromFile(file), null)
@@ -291,19 +306,21 @@ class NearbyTransport(context: Context, private val scope: CoroutineScope) : Nea
         }
 
         override fun onPayloadTransferUpdate(endpointId: String, update: PayloadTransferUpdate) {
-            if (session != generation || payloadPeers[update.payloadId] != endpointId) return
+            if (session != generation) return
+            val status = when (update.status) {
+                PayloadTransferUpdate.Status.SUCCESS -> PayloadStatus.SUCCESS
+                PayloadTransferUpdate.Status.FAILURE -> PayloadStatus.FAILED
+                PayloadTransferUpdate.Status.CANCELED -> PayloadStatus.CANCELLED
+                else -> PayloadStatus.IN_PROGRESS
+            }
+            if (messageDeliveries.update(endpointId, update.payloadId, status)) return
+            if (payloadPeers[update.payloadId] != endpointId) return
             val expectation = expectedFiles[update.payloadId]
             if (expectation != null && (update.bytesTransferred > expectation.byteCount || update.totalBytes > expectation.byteCount)) {
                 cancel(update.payloadId)
                 emit(TransportEvent.Progress(endpointId, update.payloadId, update.bytesTransferred.coerceIn(0, expectation.byteCount), expectation.byteCount, PayloadStatus.FAILED))
                 emit(TransportEvent.Error(endpointId, "The received file exceeded its approved size"))
                 return
-            }
-            val status = when (update.status) {
-                PayloadTransferUpdate.Status.SUCCESS -> PayloadStatus.SUCCESS
-                PayloadTransferUpdate.Status.FAILURE -> PayloadStatus.FAILED
-                PayloadTransferUpdate.Status.CANCELED -> PayloadStatus.CANCELLED
-                else -> PayloadStatus.IN_PROGRESS
             }
             emit(TransportEvent.Progress(endpointId, update.payloadId, update.bytesTransferred, update.totalBytes, status))
             if (status == PayloadStatus.IN_PROGRESS) return
@@ -340,9 +357,10 @@ class NearbyTransport(context: Context, private val scope: CoroutineScope) : Nea
         accepted -= endpointId
         allowed -= endpointId
         receivedHello -= endpointId
+        messageDeliveries.disconnect(endpointId)
         payloadPeers.filterValues { it == endpointId }.keys.toList().forEach(::cancel)
         expectedFiles.entries.removeAll { it.value.endpointId == endpointId }
-        updatePeer(endpointId) { it.copy(status = PeerStatus.DISCONNECTED, authenticationDigits = null) }
+        mutablePeers.value = mutablePeers.value.filterNot { it.endpointId == endpointId }
         emit(TransportEvent.Disconnected(endpointId))
     }
 
