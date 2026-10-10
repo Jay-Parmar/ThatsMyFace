@@ -19,3 +19,11 @@ Use two consenting adults, two Android 10+ phones with compatible Google Play se
 - [ ] Try TalkBack, larger font size, landscape, denied camera permission with QR image/text fallback, low storage, and a phone without compatible Google Play services.
 
 One phone plus an emulator, or two emulators using the real Nearby SDK, does not count as this two-physical-phone acceptance test. Automated model fixtures establish execution, not real-world recognition accuracy.
+
+## Photo browsing and request visibility
+
+- [ ] Browse at least 100 selected photos. Open one near the end, close details, and switch photo tabs without losing your place. Repeat at large font size.
+- [ ] Confirm one live friend card after reconnecting. Manage event access separately.
+- [ ] Request an original and use the owner's approval shortcut in Photos. Check progress and retry from Requested.
+- [ ] Find new received originals in Photos > Requested and the gallery Requested album. Existing downloads should remain readable without duplication.
+- [ ] During active sharing, let the normal screen timeout pass. The screen stays awake; manual lock or leaving the app still stops sharing.

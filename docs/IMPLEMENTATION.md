@@ -10,7 +10,7 @@
 - E: Privacy deletion, local feedback/export, readable dark UI, setup/privacy/model documentation, and two-phone checklist implemented.
 - Real bundled YuNet/SFace detection, alignment, and embeddings execute on host, Android 16 emulator, and physical Android 16 phone.
 - Local persistence, original byte preservation, duplicate saves, revoked provider access, and cancelled save tested on emulator.
-- Local build/lint, 74 JVM tests, and 42 Android instrumentation tests passed across API 29 local and API 36 CI emulators. Model tests cover degraded images and orientation. CI covers both Android versions.
+- Local build/lint, 86 JVM tests, and 46 Android instrumentation tests passed on API 29 after the gallery changes. Model tests cover degraded images and orientation. CI covers API 29 and API 36.
 - Integrated GitHub build, model, and emulator jobs passed after the recovery fixes. The earlier APK installed and launched on the available physical phone, with working Nearby startup.
 - Production Nearby SDK on two isolated API 36 emulators passed pairing, opt-in reference exchange, source-side recognition, approval/rejection, original byte integrity, persisted waiting state, reconnect/retry, and future-access removal.
 - Saved-copy checks distinguish intact, missing, changed, and unreadable copies. Missing copies require a fresh request and owner approval; an intact copy does not produce another download.
@@ -21,12 +21,17 @@
 - Folder selection now accepts the same JPEG aliases as individual selection, with a nested-folder and byte-integrity regression.
 - System-picker tests await activity destruction and assert actual grant removal before checking blocked reads and transfers.
 
+- Adaptive photo grids, saved tab positions, clear approval shortcuts, and a separate Requested gallery replace the long photo cards. New originals use Pictures/ThatsMyFace/Requested with legacy-copy recovery.
+- Control messages wait for actual SDK delivery or report a retryable failure. Stale disconnected endpoint cards are removed. The screen stays awake only during foreground sharing.
+- Physical A142 and Jay Ultra joined by QR and completed verification. The user confirmed remote previews and an original download after approving it on the owner phone.
+
 ## Pending
+- Repeat pairing/download checks on the updated physical phones. The updated APK is installed on A142; Jay Ultra update is pending.
+- Finish physical disconnection/retry, duplicate prevention, permission revocation, and offline acceptance.
 - The user reviewed real-photo suggestions on the available phone; counts of incorrect or missed suggestions are still unreported. Aggregate results establish execution, not accuracy.
 - Physical acceptance and low-light recognition evaluation remain as listed below.
 
 ## Blocked
-- Two-physical-phone acceptance requires a second available Android phone. One physical phone and two isolated emulators are available.
 - Friend-group accuracy and all-night field testing require consenting participants.
 
 Implementation is on `feat/core-sharing` in draft PR #2, stacked on `feat/local-events` in draft PR #1. This is not yet a completed, physically validated v1.

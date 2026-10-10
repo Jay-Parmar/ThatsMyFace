@@ -1,5 +1,13 @@
 # Validation record
 
+## Gallery and request update
+
+- Source `d68ba38`: debug APK/test APK builds and lint passed; all 86 JVM tests passed, including 12 control-message delivery/cancellation regressions.
+- All 46 Android tests passed on a local API 29 emulator at 320 by 640: 14 storage, 17 paired-session, 8 recognition, 2 application-flow, 2 gallery interaction, 2 preview, and 1 real picker test. The gallery test exercises 120 lazy items, selection and retained position; the approval test checks persisted approval while the friend is offline. An initial viewport assumption failed with an old density override; the test now uses an explicit phone-sized viewport.
+- A temporary emulator-only fixture exercised the production UI with 120 selected references, 120 offers, waiting requests, and four actual MediaStore saved copies. Grid, detail, and approval controls were visually checked at normal size and at 320dp with 150% font. Exact fixture cleanup passed; no fixture seeder ships in the source or APK.
+- Storage checks verify the Requested destination, legacy-folder recovery, original bytes, duplicate prevention, protected user edits, and saved thumbnails after source deletion. A new session test verifies declining an unapproved request after disconnection.
+- The APK was installed on the A142 without clearing data. Device test and its saved photos remain available; sharing startup and its keep-screen-on window flag were checked. The updated transport still needs a repeated two-phone pairing/download check. Earlier physical results below used the preceding APK.
+
 ## Run and passed
 
 - Foundation staged snapshot: `assembleDebug lintDebug` using JDK 17, Gradle 8.13, AGP 8.13.2, Android SDK 36.
@@ -30,6 +38,12 @@ The updated APK was installed on the Nothing A142 without clearing its profile o
 
 After both fixes, all ten photos imported, their imported digests matched the selected-provider bytes, and all ten previews loaded. Local recognition using two saved reference selfies checked 22 faces, produced 2 suggested photos and 3 uncertain photos, and reported no processing failures. Sharing stayed off. After the user's review, a confirmed match remained confirmed after force-stop and relaunch. Counts of wrong or missed suggestions are still unreported, so these results are not an accuracy measurement. No photos, names, URIs, embeddings, or private screenshots were copied into the repository or test reports. Temporary diagnostic instrumentation was removed from the phone.
 
+## A142 and Jay Ultra
+
+Both physical phones joined the same event using the A142 invitation and completed the code check. The A142 displayed a verified live connection; the user confirmed its selected previews appeared on Jay Ultra. Two original requests reached the A142 and still awaited owner approval. After the user approved a request, they confirmed the original downloaded on Jay Ultra. No private file was pulled from either phone, and byte integrity was not independently measured on Jay Ultra.
+
+The same session exposed a stale disconnected endpoint card beside the live connection, and approval controls buried in Downloads. Physical offline operation, interruption recovery, and duplicate prevention still need acceptance checks.
+
 ## Production Nearby SDK on virtual devices
 
 Two isolated Android 16 / API 36 emulators used Android Emulator 37.1.11 and Google Play services 25.26.35 (260800-783060121). These checks used the production SDK and virtual radios, without the test-only transport. The tested APK's source is commit `436b76d`, including the invitation-input and saved-copy recovery fixes.
@@ -45,11 +59,11 @@ This establishes production SDK behavior over virtual networking, not physical r
 
 ## Artifact
 
-Local APK: `app/build/outputs/apk/debug/app-debug.apk`. The verified APK SHA-256 is `3b1107c0b4f87b9d05a012db9e02df8611c2e3dd0902805e3c4051a9da26df80`. Rebuilding can produce a different debug artifact.
+Local APK: `app/build/outputs/apk/debug/app-debug.apk`. The verified APK SHA-256 is `e7c0c29b69b42dfd154d21c1e48a1b7a18d3bb62b3ce453435b28506c0bd8ac6`. Rebuilding can produce a different debug artifact.
 
 ## Required before claiming v1 complete
 
 - Two physical phones: nearby discovery, mutual code verification, consent, original transfer, disconnection/retry, and offline behavior.
 - Consenting friend-group samples: low-light accuracy, wrong and ambiguous suggestions, manual corrections, and accessibility.
 
-No physical two-phone transfer result is claimed here.
+One user-confirmed physical download is recorded above. Full physical acceptance is still pending.

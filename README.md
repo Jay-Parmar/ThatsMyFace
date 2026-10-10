@@ -22,8 +22,8 @@ On macOS/Linux use `./gradlew`. Debug APK: `app/build/outputs/apk/debug/app-debu
 2. Select photos or an event folder. Folder rescans happen only when requested. Verified event friends may see previews; originals always need approval.
 3. Open Friends on both phones, enable Wi-Fi and Bluetooth, and start sharing. Compare the pairing digits in person before confirming on both phones.
 4. Optionally select one to five clear reference selfies in You. Opt in to share face references for the event. Recognition runs on the phone holding the photos.
-5. Review Photos of me. Confirm, reject, or manually correct suggestions, then request originals. The owner approves in Downloads.
-6. Received originals appear in `Pictures/ThatsMyFace`. Keep both apps open until they finish. Reconnect and retry interrupted requests.
+5. Review Photos of me. Confirm, reject, or manually correct suggestions, then request originals. The owner taps the approval shortcut in Photos, or opens Photos > Requested.
+6. Received originals appear in Photos > Requested and `Pictures/ThatsMyFace/Requested`. Keep both apps open until they finish. The screen stays awake during active sharing. Reconnect and retry interrupted requests.
 
 Sharing requires compatible Google Play services. Installed models run offline, and Nearby supports offline peer transport, but SDK diagnostics and system services may use the network. We do not claim the entire phone produces no network traffic.
 

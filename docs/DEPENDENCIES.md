@@ -1,6 +1,6 @@
 # Dependency notes
 
-Versions are pinned in the Gradle files and Python requirements. Compose artifacts use BOM 2025.09.01. The app uses JDK 17, Gradle 8.13, AGP 8.13.2, and Kotlin 2.2.20. This compatible stable set is intentional; latest-version lint notices are reviewed rather than automatically upgraded.
+Versions are pinned in the Gradle files and Python requirements. Compose artifacts, including UI test libraries, use BOM 2025.09.01. The Compose test host is debug-only. The app uses JDK 17, Gradle 8.13, AGP 8.13.2, and Kotlin 2.2.20. This compatible stable set is intentional; latest-version lint notices are reviewed rather than automatically upgraded.
 
 | Component | Purpose | License or terms |
 | --- | --- | --- |
