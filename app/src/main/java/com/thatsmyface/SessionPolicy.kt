@@ -42,9 +42,10 @@ internal object SessionPolicy {
     }
 
     fun decision(transfer: Transfer, approved: Boolean, reason: String): Transfer =
-        if (transfer.direction != TransferDirection.RECEIVE || transfer.status != TransferStatus.AWAITING_APPROVAL) transfer
+        if (transfer.direction != TransferDirection.RECEIVE || transfer.status !in setOf(
+                TransferStatus.AWAITING_APPROVAL, TransferStatus.WAITING, TransferStatus.FAILED)) transfer
         else transfer.copy(status = if (approved) TransferStatus.QUEUED else TransferStatus.REJECTED,
-            approved = approved, error = reason.takeIf(String::isNotBlank))
+            approved = approved, payloadId = null, bytesTransferred = 0, error = reason.takeIf(String::isNotBlank))
 
     fun acceptsReceipt(transfer: Transfer, receipt: WireMessage.Receipt): Boolean =
         transfer.direction == TransferDirection.SEND && transfer.approved &&

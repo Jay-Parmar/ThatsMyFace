@@ -241,6 +241,123 @@ class SharingSessionInstrumentedTest {
         } finally { fixture.close() }
     }
 
+    @Test fun approvalSavedWhileFriendIsAwayCanResumeFromTheOwnersPhone() = runBlocking {
+        val fixture = Fixture()
+        try {
+            fixture.initialize()
+            fixture.pair()
+            fixture.request()
+            val request = fixture.ownerTransfer().requestId
+            withContext(Dispatchers.Main) { fixture.receiver.stop() }
+            fixture.await { fixture.ownerTransfer().status == TransferStatus.WAITING && fixture.receiverTransfer()?.status == TransferStatus.WAITING }
+            withContext(Dispatchers.Main) { fixture.owner.approve(fixture.ownerTransfer()) }
+            val savedOwner = LocalStore(fixture.ownerContext, fixture.ownerKey)
+            savedOwner.load()
+            assertTrue(savedOwner.state.value.transfers.single().approved)
+            assertEquals(request, savedOwner.state.value.transfers.single().requestId)
+            val savedReceiver = LocalStore(fixture.receiverContext, fixture.receiverKey)
+            savedReceiver.load()
+            assertEquals(TransferStatus.WAITING, savedReceiver.state.value.transfers.single().status)
+            assertEquals(request, savedReceiver.state.value.transfers.single().requestId)
+
+            val catalogs = fixture.ownerLink.messages.filterIsInstance<WireMessage.Catalog>().count { it.photos.isNotEmpty() }
+            withContext(Dispatchers.Main) { fixture.receiver.start(fixture.event) }
+            fixture.pair()
+            fixture.await { fixture.ownerLink.messages.filterIsInstance<WireMessage.Catalog>().count { it.photos.isNotEmpty() } > catalogs }
+            val waiting = requireNotNull(fixture.receiverTransfer())
+            val photo = fixture.ownerStore.state.value.photos.single()
+            withContext(Dispatchers.Main) {
+                fixture.ownerLink.sendMessage(fixture.receiverLink.id, WireMessage.Decision(fixture.event.id, newId(), photo.id, true))
+                fixture.ownerLink.sendMessage(fixture.receiverLink.id, WireMessage.Decision(fixture.event.id, request, newId(), true))
+                fixture.ownerLink.sendMessage(fixture.receiverLink.id, WireMessage.Catalog(fixture.event.id,
+                    listOf(com.thatsmyface.nearby.PhotoOffer(photo.id, "Request scope checked", photo.mimeType, photo.size))))
+            }
+            fixture.await { fixture.receiverStore.state.value.offers.singleOrNull()?.displayName == "Request scope checked" }
+            assertEquals(waiting, fixture.receiverTransfer())
+            withContext(Dispatchers.Main) { fixture.owner.retry(fixture.ownerTransfer()) }
+            fixture.await { fixture.receiverTransfer()?.status == TransferStatus.COMPLETE && fixture.ownerTransfer().status == TransferStatus.COMPLETE }
+            assertEquals(request, fixture.receiverTransfer()?.requestId)
+            assertEquals(1, fixture.receiverLink.messages.filterIsInstance<WireMessage.Request>().size)
+            assertEquals(1, fixture.ownerLink.filesSent)
+            assertArrayEquals(fixture.original, fixture.read(Uri.parse(fixture.receiverTransfer()!!.savedUri)))
+        } finally { fixture.close() }
+    }
+
+    @Test fun ownerCanResumeAnInterruptedApprovedOriginalWithoutANewRequest() = runBlocking {
+        val fixture = Fixture()
+        try {
+            fixture.initialize()
+            fixture.pair()
+            fixture.request()
+            val request = fixture.ownerTransfer().requestId
+            fixture.ownerLink.interruptNextFile = true
+            withContext(Dispatchers.Main) { fixture.owner.approve(fixture.ownerTransfer()) }
+            fixture.await { fixture.receiverTransfer()?.status == TransferStatus.WAITING &&
+                fixture.ownerTransfer().status in setOf(TransferStatus.WAITING, TransferStatus.FAILED) }
+            assertTrue(fixture.ownerTransfer().approved)
+            fixture.pair()
+            withContext(Dispatchers.Main) { fixture.owner.retry(fixture.ownerTransfer()) }
+            fixture.await { fixture.receiverTransfer()?.status == TransferStatus.COMPLETE && fixture.ownerTransfer().status == TransferStatus.COMPLETE }
+            assertEquals(request, fixture.receiverTransfer()?.requestId)
+            assertEquals(1, fixture.receiverLink.messages.filterIsInstance<WireMessage.Request>().size)
+            assertEquals(2, fixture.ownerLink.filesSent)
+            assertArrayEquals(fixture.original, fixture.read(Uri.parse(fixture.receiverTransfer()!!.savedUri)))
+            assertArrayEquals(fixture.original, fixture.read(fixture.source))
+        } finally { fixture.close() }
+    }
+
+    @Test fun ownerCanRetryFailedDeliveryAndCorruptBytesWithoutANewRequest() = runBlocking {
+        val fixture = Fixture()
+        try {
+            fixture.initialize()
+            fixture.pair()
+            fixture.request()
+            val request = fixture.ownerTransfer().requestId
+            fixture.ownerLink.failNextFile = true
+            withContext(Dispatchers.Main) { fixture.owner.approve(fixture.ownerTransfer()) }
+            fixture.await { fixture.receiverTransfer()?.status == TransferStatus.FAILED && fixture.ownerTransfer().status == TransferStatus.FAILED }
+            val failedPayload = requireNotNull(fixture.receiverTransfer()?.payloadId)
+            fixture.ownerLink.corruptNextFile = true
+            withContext(Dispatchers.Main) { fixture.owner.retry(fixture.ownerTransfer()) }
+            fixture.await { fixture.ownerLink.filesSent == 2 && fixture.receiverTransfer()?.status == TransferStatus.FAILED &&
+                fixture.ownerTransfer().status == TransferStatus.FAILED }
+            assertTrue(failedPayload in fixture.receiverLink.cancelledPayloads)
+            assertNull(fixture.receiverTransfer()?.savedUri)
+            withContext(Dispatchers.Main) { fixture.owner.retry(fixture.ownerTransfer()) }
+            fixture.await { fixture.receiverTransfer()?.status == TransferStatus.COMPLETE && fixture.ownerTransfer().status == TransferStatus.COMPLETE }
+            assertEquals(request, fixture.receiverTransfer()?.requestId)
+            assertEquals(1, fixture.receiverLink.messages.filterIsInstance<WireMessage.Request>().size)
+            assertEquals(3, fixture.ownerLink.filesSent)
+            assertArrayEquals(fixture.original, fixture.read(Uri.parse(fixture.receiverTransfer()!!.savedUri)))
+            assertArrayEquals(fixture.original, fixture.read(fixture.source))
+        } finally { fixture.close() }
+    }
+
+    @Test fun aFailedFileEnqueueNotifiesTheReceiverAndOwnerRetryCompletes() = runBlocking {
+        val fixture = Fixture()
+        try {
+            fixture.initialize()
+            fixture.pair()
+            fixture.request()
+            val request = fixture.ownerTransfer().requestId
+            fixture.ownerLink.failNextFileEnqueue = true
+            withContext(Dispatchers.Main) { fixture.owner.approve(fixture.ownerTransfer()) }
+            fixture.await { fixture.receiverTransfer()?.status == TransferStatus.FAILED && fixture.ownerTransfer().status == TransferStatus.FAILED }
+            assertEquals(0, fixture.ownerLink.filesSent)
+            assertNull(fixture.ownerTransfer().payloadId)
+            assertNull(fixture.receiverTransfer()?.payloadId)
+            assertNull(fixture.receiverTransfer()?.savedUri)
+            assertTrue(fixture.receiverLink.cancelledPayloads.isNotEmpty())
+            withContext(Dispatchers.Main) { fixture.owner.retry(fixture.ownerTransfer()) }
+            fixture.await { fixture.receiverTransfer()?.status == TransferStatus.COMPLETE && fixture.ownerTransfer().status == TransferStatus.COMPLETE }
+            assertEquals(request, fixture.receiverTransfer()?.requestId)
+            assertEquals(1, fixture.receiverLink.messages.filterIsInstance<WireMessage.Request>().size)
+            assertEquals(1, fixture.ownerLink.filesSent)
+            assertArrayEquals(fixture.original, fixture.read(Uri.parse(fixture.receiverTransfer()!!.savedUri)))
+            assertArrayEquals(fixture.original, fixture.read(fixture.source))
+        } finally { fixture.close() }
+    }
+
     @Test fun corruptPayloadFailsOnBothPhonesAndCanBeRequestedAgain() = runBlocking {
         val fixture = Fixture()
         try {
@@ -470,7 +587,7 @@ class SharingSessionInstrumentedTest {
         private val testId = newId()
         val ownerContext = IsolatedContext(context, "$testId-owner")
         val receiverContext = IsolatedContext(context, "$testId-receiver")
-        private val ownerKey = "thatsmyface.test.$testId.owner"
+        val ownerKey = "thatsmyface.test.$testId.owner"
         val receiverKey = "thatsmyface.test.$testId.receiver"
         val ownerStore = LocalStore(ownerContext, ownerKey)
         val receiverStore = LocalStore(receiverContext, receiverKey)
@@ -595,6 +712,8 @@ class SharingSessionInstrumentedTest {
         val cancelledPayloads = mutableSetOf<Long>()
         var filesSent = 0
         var interruptNextFile = false
+        var failNextFile = false
+        var failNextFileEnqueue = false
         var corruptNextFile = false
         var failNextReady = false
         var failNextCancel = false
@@ -675,10 +794,17 @@ class SharingSessionInstrumentedTest {
             check(allowed && other.allowed && endpointId == other.id)
             val bytes = originals.getValue(prepared.payloadId).readBytes()
             check(other.expected[prepared.payloadId] == bytes.size.toLong()) { "File sent without approved metadata acknowledgment" }
+            if (failNextFileEnqueue) { failNextFileEnqueue = false; error("Injected file enqueue failure") }
             filesSent++
             events.emit(TransportEvent.Progress(other.id, prepared.payloadId, bytes.size / 2L, bytes.size.toLong(), PayloadStatus.IN_PROGRESS))
             other.events.emit(TransportEvent.Progress(id, prepared.payloadId, bytes.size / 2L, bytes.size.toLong(), PayloadStatus.IN_PROGRESS))
             if (interruptNextFile) { interruptNextFile = false; disconnect(endpointId); error("Injected transport interruption") }
+            if (failNextFile) {
+                failNextFile = false
+                events.emit(TransportEvent.Progress(other.id, prepared.payloadId, bytes.size / 2L, bytes.size.toLong(), PayloadStatus.FAILED))
+                other.events.emit(TransportEvent.Progress(id, prepared.payloadId, bytes.size / 2L, bytes.size.toLong(), PayloadStatus.FAILED))
+                return
+            }
             if (corruptNextFile) { corruptNextFile = false; bytes[bytes.lastIndex] = (bytes.last().toInt() xor 1).toByte() }
             val uri = stage(bytes)
             events.emit(TransportEvent.Progress(other.id, prepared.payloadId, bytes.size.toLong(), bytes.size.toLong(), PayloadStatus.SUCCESS))

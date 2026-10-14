@@ -25,10 +25,33 @@ class SessionPolicyTest {
     private val photo = "photo-12345678"
     private val hash = "a".repeat(64)
 
-    @Test fun aLateApprovalCannotReopenCancelledOrFailedAttempts() {
-        listOf(TransferStatus.CANCELLED, TransferStatus.REJECTED, TransferStatus.FAILED, TransferStatus.COMPLETE, TransferStatus.TRANSFERRING).forEach { status ->
+    @Test fun aLateDecisionCannotReopenTerminalOrActiveAttempts() {
+        listOf(TransferStatus.CANCELLED, TransferStatus.REJECTED, TransferStatus.COMPLETE,
+            TransferStatus.QUEUED, TransferStatus.TRANSFERRING).forEach { status ->
             val transfer = transfer().copy(direction = TransferDirection.RECEIVE, status = status)
             assertEquals(transfer, SessionPolicy.decision(transfer, true, ""))
+            assertEquals(transfer, SessionPolicy.decision(transfer, false, "Declined"))
+        }
+    }
+
+    @Test fun ownerCanResumeWaitingOrFailedRequestsWithFreshPayloadState() {
+        listOf(TransferStatus.WAITING, TransferStatus.FAILED).forEach { status ->
+            val previous = transfer().copy(direction = TransferDirection.RECEIVE, status = status,
+                bytesTransferred = 42, error = "Interrupted")
+            val resumed = SessionPolicy.decision(previous, true, "")
+            assertEquals(TransferStatus.QUEUED, resumed.status)
+            assertTrue(resumed.approved)
+            assertEquals(previous.key, resumed.key)
+            assertEquals(previous.requestId, resumed.requestId)
+            assertNull(resumed.payloadId)
+            assertEquals(0L, resumed.bytesTransferred)
+            assertNull(resumed.error)
+            val denied = SessionPolicy.decision(previous, false, "Owner declined")
+            assertEquals(TransferStatus.REJECTED, denied.status)
+            assertFalse(denied.approved)
+            assertNull(denied.payloadId)
+            val outgoing = previous.copy(direction = TransferDirection.SEND)
+            assertEquals(outgoing, SessionPolicy.decision(outgoing, true, ""))
         }
     }
 

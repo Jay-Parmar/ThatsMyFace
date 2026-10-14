@@ -219,11 +219,7 @@ class SharingSession(
                 refreshAll()
             }
             is WireMessage.Request -> receiveRequest(endpoint, peer, message)
-            is WireMessage.Decision -> {
-                updateTransfer(message.requestId, peer, message.photoId, TransferDirection.RECEIVE) {
-                    SessionPolicy.decision(it, message.approved, message.reason)
-                }
-            }
+            is WireMessage.Decision -> receiveDecision(peer, message)
             is WireMessage.FileReady -> receiveMetadata(endpoint, peer, message)
             is WireMessage.Ready -> {
                 val transfer = current.transfers.find { it.eventId == active && it.requestId == message.requestId && it.receiverId == peer && it.direction == TransferDirection.SEND && it.payloadId == message.payloadId && it.status == TransferStatus.QUEUED } ?: return
@@ -237,8 +233,14 @@ class SharingSession(
                     } else releasePrepared(message.payloadId)
                 } catch (error: Exception) {
                     releasePrepared(message.payloadId)
-                    changeTransfer(sending, sending.copy(status = TransferStatus.FAILED, error = "Original could not be sent. Reconnect and retry."))
+                    val failed = changeTransfer(sending, sending.copy(status = TransferStatus.FAILED, payloadId = null,
+                        error = "Original could not be sent. Reconnect and retry."))
                     if (error is CancellationException) throw error
+                    if (failed && validPeer(endpoint, active, peer)) {
+                        try { transport.sendMessage(endpoint, WireMessage.Error(active, sending.requestId, "original_not_sent")) }
+                        catch (cancelled: CancellationException) { throw cancelled }
+                        catch (_: Exception) { notify("Original could not be sent. Reconnect both phones before retrying.") }
+                    }
                 }
             }
             is WireMessage.Receipt -> {
@@ -596,9 +598,13 @@ class SharingSession(
 
     fun endpointFor(event: String, peer: String): String? = identities.entries.find { it.value == peer && validPeer(it.key, event, peer) }?.key
 
-    private suspend fun updateTransfer(request: String, peer: String, photo: String, direction: TransferDirection, transform: (Transfer) -> Transfer) {
-        val transfer = current.transfers.find { it.eventId == eventId.value && it.requestId == request && it.photoId == photo && it.direction == direction && (it.ownerId == peer || it.receiverId == peer) } ?: return
-        changeTransfer(transfer, transform(transfer))
+    private suspend fun receiveDecision(peer: String, decision: WireMessage.Decision) {
+        val transfer = current.transfers.find { it.eventId == eventId.value && it.eventId == decision.eventId &&
+            it.requestId == decision.requestId && it.photoId == decision.photoId &&
+            it.direction == TransferDirection.RECEIVE && it.ownerId == peer } ?: return
+        val next = SessionPolicy.decision(transfer, decision.approved, decision.reason)
+        if (next == transfer || !changeTransfer(transfer, next)) return
+        transfer.payloadId?.let { transport.cancel(it); receivingJobs.remove(it)?.cancel() }
     }
 
     private suspend fun beginTransfer(transfer: Transfer): Boolean {
