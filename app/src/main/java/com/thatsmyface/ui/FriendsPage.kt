@@ -56,7 +56,7 @@ internal fun FriendsPage(model: AppModel, state: AppState, event: Event?, busy: 
     val verified = if (sharing) nearby.count { it.status == PeerStatus.VERIFIED } else 0
     Page {
         item { Panel(if (sharing) "Nearby sharing is on" else "Good photos travel together",
-            if (sharing) "$verified verified friends. Keep both apps open while sharing."
+            if (sharing) "$verified verified ${if (verified == 1) "friend" else "friends"}. Keep both apps open while sharing."
             else "Join the same event, bring your phones close, and compare a short code.") {
             if (event == null) Button(onClick = openEvents, modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp)) { Text("Choose an event") }
             else if (sharing) {

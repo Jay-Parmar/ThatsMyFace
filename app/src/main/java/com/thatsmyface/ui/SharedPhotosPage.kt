@@ -120,7 +120,8 @@ private fun FoundPhotos(model: AppModel, state: AppState, event: Event, busy: Bo
     PhotoGrid {
         item(span = { GridItemSpan(maxLineSpan) }) {
             Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                SectionHeading("Find your moments", "$receivedCount previews from friends · $connectedFriends friends connected")
+                SectionHeading("Find your moments", "$receivedCount ${if (receivedCount == 1) "preview" else "previews"} from friends · " +
+                    "$connectedFriends ${if (connectedFriends == 1) "friend" else "friends"} connected")
                 FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     if (!sharing || connectedFriends == 0) TextButton(onClick = openFriends,
                         modifier = Modifier.heightIn(min = 48.dp)) { Text(if (sharing) "Finish pairing" else "Connect with friends") }
@@ -250,7 +251,8 @@ private fun TransfersPage(model: AppModel, state: AppState, event: Event, busy: 
     }.sortedBy { it.status == TransferStatus.COMPLETE }
     PhotoGrid {
         if (approvals.isNotEmpty()) item(span = { GridItemSpan(maxLineSpan) }) {
-            Panel("Needs your approval", "${approvals.size} requests from friends. Approve only originals you want to share, including any location metadata.")
+            Panel("Needs your approval", "${approvals.size} ${if (approvals.size == 1) "request" else "requests"} from friends. " +
+                "Approve only originals you want to share, including any location metadata.")
         }
         items(approvals, key = { "approval:${it.key}" }, span = { GridItemSpan(maxLineSpan) }) { transfer ->
             Card(colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.secondaryContainer)) {
@@ -277,7 +279,7 @@ private fun TransfersPage(model: AppModel, state: AppState, event: Event, busy: 
         if (activeSent.isNotEmpty()) item(span = { GridItemSpan(maxLineSpan) }) {
             Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
                 Text("Sharing with friends", style = MaterialTheme.typography.titleLarge)
-                Text("${activeSent.size} active transfers. Tap a photo for progress, retry, or cancellation.",
+                Text("${activeSent.size} active ${if (activeSent.size == 1) "transfer" else "transfers"}. Tap a photo for progress, retry, or cancellation.",
                     style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
             }
         }
@@ -286,7 +288,8 @@ private fun TransfersPage(model: AppModel, state: AppState, event: Event, busy: 
         }
         item(span = { GridItemSpan(maxLineSpan) }) {
             Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                SectionHeading("Your requested photos", "$completedCount received · ${received.size - completedCount} requests")
+                val pendingCount = received.size - completedCount
+                SectionHeading("Your requested photos", "$completedCount received · $pendingCount ${if (pendingCount == 1) "request" else "requests"}")
                 FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     if (received.isNotEmpty()) TextButton(onClick = { searching = !searching; if (!searching) query = "" },
                         modifier = Modifier.heightIn(min = 48.dp)) { Text(if (searching) "Close search" else "Search") }
