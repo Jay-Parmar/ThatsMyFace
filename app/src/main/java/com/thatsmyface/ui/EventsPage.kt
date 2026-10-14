@@ -9,6 +9,10 @@ import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
+import androidx.compose.foundation.layout.FlowRow
+import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.heightIn
@@ -17,6 +21,8 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
+import androidx.compose.material3.Card
+import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
@@ -30,6 +36,7 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.input.KeyboardType
@@ -53,7 +60,9 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
 @Composable
-internal fun EventsPage(model: AppModel, state: AppState, selected: Event?, busy: Boolean, openPhotos: () -> Unit) {
+@OptIn(ExperimentalLayoutApi::class)
+internal fun EventsPage(model: AppModel, state: AppState, selected: Event?, busy: Boolean,
+    openPhotos: () -> Unit, openFriends: () -> Unit, openProfile: () -> Unit) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
     var title by rememberSaveable { mutableStateOf("") }
@@ -61,6 +70,9 @@ internal fun EventsPage(model: AppModel, state: AppState, selected: Event?, busy
     var qrEvent by remember { mutableStateOf<Event?>(null) }
     var decoding by remember { mutableStateOf(false) }
     var cameraExplanation by remember { mutableStateOf(false) }
+    var creating by rememberSaveable { mutableStateOf(false) }
+    var joining by rememberSaveable { mutableStateOf(false) }
+    var otherJoinOptions by rememberSaveable { mutableStateOf(false) }
     val scanner = rememberLauncherForActivityResult(ScanContract()) { result -> result.contents?.let(model::joinEvent) }
     val camera = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
         if (granted) scanner.launch(ScanOptions().setDesiredBarcodeFormats(ScanOptions.QR_CODE)
@@ -74,6 +86,7 @@ internal fun EventsPage(model: AppModel, state: AppState, selected: Event?, busy
                 try {
                     val decoded = withContext(Dispatchers.Default) { decodeInvitation(context.contentResolver, it) }
                     model.joinEvent(decoded)
+                    joining = false
                 } catch (_: Exception) {
                     model.notify("No readable event QR found. Try a clearer image or paste the invitation.")
                 } finally { decoding = false }
@@ -81,33 +94,81 @@ internal fun EventsPage(model: AppModel, state: AppState, selected: Event?, busy
         }
     }
     Page {
-        item { Panel("A night worth keeping", "One event for your pandal crawl, weekend trip, or party. Photos stay with the people who took them.") {
-            OutlinedTextField(title, { title = it.take(60) }, label = { Text("Event name") }, singleLine = true,
-                modifier = Modifier.fillMaxWidth(), enabled = !busy)
-            Button(onClick = { model.createEvent(title); title = "" }, enabled = title.isNotBlank() && !busy,
-                modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp)) { Text("Create event") }
+        if (selected != null) item {
+            Card(colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.primaryContainer)) {
+                Column(Modifier.fillMaxWidth().padding(20.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                    Text("YOUR CURRENT EVENT", style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.primary)
+                    Text(selected.title, style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.Bold)
+                    Text("${state.photos.count { it.eventId == selected.id }} selected photos · ${state.peers.count { it.eventId == selected.id && it.allowed }} event friends",
+                        style = MaterialTheme.typography.bodyMedium)
+                    Button(onClick = openPhotos, modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp)) { Text("Open photos") }
+                    FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        OutlinedButton(onClick = { qrEvent = selected }, modifier = Modifier.heightIn(min = 48.dp)) { Text("Show invitation") }
+                        TextButton(onClick = openFriends, modifier = Modifier.heightIn(min = 48.dp)) { Text("Find friends") }
+                    }
+                }
+            }
+        } else item { Panel("Your people. Your pictures.", "One event for your pandal crawl, weekend away, or party. Find the moments you were part of.") {
+            FeatureRow("1", "Gather your friends", "Create an event or join their QR invitation.")
+            FeatureRow("2", "Find your photos", "Choose what to share, then verify nearby friends.")
+            FeatureRow("3", "Keep the originals", "Ask for a photo. Its owner approves the download.")
         } }
-        item { Panel("Join your friends", "Scan their QR invitation. You will still compare a short code before any private data is exchanged.") {
-            Button(onClick = { cameraExplanation = true }, enabled = !busy && !decoding,
-                modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp)) { Text("Scan invitation QR") }
-            OutlinedButton(onClick = { qrPicker.launch(arrayOf("image/*")) }, enabled = !busy && !decoding,
-                modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp)) { Text(if (decoding) "Reading QR image" else "Choose QR image") }
-            OutlinedTextField(invitation, { invitation = it.take(2048) }, label = { Text("Or paste invitation") },
-                modifier = Modifier.fillMaxWidth(), maxLines = 3, enabled = !busy,
-                keyboardOptions = KeyboardOptions(autoCorrectEnabled = false, keyboardType = KeyboardType.Uri))
-            OutlinedButton(onClick = { model.joinEvent(invitation) }, enabled = invitation.isNotBlank() && !busy,
-                modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp)) { Text("Join event") }
-        } }
-        items(state.events, key = { it.id }) { event ->
-            Panel(event.title, if (event.id == selected?.id) "Your selected event" else "Saved on this phone") {
-                Button(onClick = { model.selectEvent(event.id); openPhotos() }, enabled = !busy,
-                    modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp)) { Text("Open photos") }
-                OutlinedButton(onClick = { qrEvent = event }, modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp)) {
-                    Text("Show invitation")
+        item {
+            FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                if (selected == null) Button(onClick = { creating = true }, enabled = !busy,
+                    modifier = Modifier.heightIn(min = 48.dp)) { Text("Create event") }
+                else OutlinedButton(onClick = { creating = true }, enabled = !busy,
+                    modifier = Modifier.heightIn(min = 48.dp)) { Text("Create event") }
+                OutlinedButton(onClick = { joining = true }, enabled = !busy,
+                    modifier = Modifier.heightIn(min = 48.dp)) { Text("Join event") }
+            }
+        }
+        if (selected != null && state.photos.none { it.eventId == selected.id }) item {
+            Panel("Make this event yours", "Start with the photos you want friends to find.") {
+                FeatureRow("1", "Choose your photos", "Only photos you select become part of this event.")
+                FeatureRow("2", "Add your face, if you like", "A few clear selfies help friends' phones find you.")
+                TextButton(onClick = openProfile, modifier = Modifier.heightIn(min = 48.dp)) { Text("Set up face matching") }
+            }
+        }
+        val otherEvents = state.events.filter { it.id != selected?.id }
+        if (otherEvents.isNotEmpty()) item { SectionHeading("Your other events", "Each event has its own photos and friend access.") }
+        items(otherEvents, key = { it.id }) { event ->
+            Panel(event.title, "${state.photos.count { it.eventId == event.id }} selected photos") {
+                FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Button(onClick = { model.selectEvent(event.id); openPhotos() }, enabled = !busy,
+                        modifier = Modifier.heightIn(min = 48.dp)) { Text("Open photos") }
+                    TextButton(onClick = { qrEvent = event }, modifier = Modifier.heightIn(min = 48.dp)) { Text("Show invitation") }
                 }
             }
         }
     }
+    if (creating) AlertDialog(onDismissRequest = { creating = false }, title = { Text("Start a new event") },
+        text = { Column(Modifier.verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+            Text("Give tonight, your trip, or your party a name. Friends join using its QR invitation.")
+            OutlinedTextField(title, { title = it.take(60) }, label = { Text("Event name") }, singleLine = true,
+                modifier = Modifier.fillMaxWidth(), enabled = !busy)
+        } }, confirmButton = { TextButton(onClick = { model.createEvent(title); title = ""; creating = false },
+            enabled = title.isNotBlank() && !busy) { Text("Create event") } },
+        dismissButton = { TextButton(onClick = { creating = false }) { Text("Cancel") } })
+    if (joining) AlertDialog(onDismissRequest = { joining = false }, title = { Text("Join your friends") },
+        text = { Column(Modifier.verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+            Text("Use the host's invitation. Creating another event with the same name will not connect you.")
+            Button(onClick = { joining = false; cameraExplanation = true }, enabled = !busy && !decoding,
+                modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp)) { Text("Scan invitation QR") }
+            TextButton(onClick = { otherJoinOptions = !otherJoinOptions }, modifier = Modifier.heightIn(min = 48.dp)) {
+                Text(if (otherJoinOptions) "Hide other options" else "Other ways to join")
+            }
+            if (otherJoinOptions) {
+                OutlinedButton(onClick = { qrPicker.launch(arrayOf("image/*")) }, enabled = !busy && !decoding,
+                    modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp)) { Text(if (decoding) "Reading QR image" else "Choose QR image") }
+                OutlinedTextField(invitation, { invitation = it.take(2048) }, label = { Text("Or paste invitation") },
+                    modifier = Modifier.fillMaxWidth(), maxLines = 3, enabled = !busy,
+                    keyboardOptions = KeyboardOptions(autoCorrectEnabled = false, keyboardType = KeyboardType.Uri))
+                OutlinedButton(onClick = { model.joinEvent(invitation); joining = false }, enabled = invitation.isNotBlank() && !busy,
+                    modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp)) { Text("Join event") }
+            }
+        } }, confirmButton = { TextButton(onClick = { joining = false }) { Text("Close") } })
     if (cameraExplanation) AlertDialog(onDismissRequest = { cameraExplanation = false }, title = { Text("Read an event QR") },
         text = { Text("The camera is used only to read the invitation. No camera photo is saved or shared. You can also choose a saved QR image.") },
         confirmButton = { TextButton(onClick = { cameraExplanation = false; camera.launch(Manifest.permission.CAMERA) }) { Text("Open camera") } },

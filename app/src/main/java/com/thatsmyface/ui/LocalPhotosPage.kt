@@ -28,6 +28,7 @@ import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
@@ -49,7 +50,9 @@ internal fun LocalPhotosPage(model: AppModel, state: AppState, event: Event, bus
     var tagging by remember { mutableStateOf<String?>(null) }
     var selectedPhoto by rememberSaveable(event.id) { mutableStateOf<String?>(null) }
     var showOptions by rememberSaveable(event.id) { mutableStateOf(false) }
-    var needsAttention by rememberSaveable(event.id) { mutableStateOf(false) }
+    var filter by rememberSaveable(event.id) { mutableIntStateOf(0) }
+    var query by rememberSaveable(event.id) { mutableStateOf("") }
+    var searching by rememberSaveable(event.id) { mutableStateOf(false) }
     val picker = rememberLauncherForActivityResult(ActivityResultContracts.OpenMultipleDocuments()) { uris ->
         if (uris.isNotEmpty()) model.importPhotos(importEventId, uris)
         importEventId = null
@@ -67,20 +70,27 @@ internal fun LocalPhotosPage(model: AppModel, state: AppState, event: Event, bus
     }
     val photos = state.photos.filter { it.eventId == event.id }
     val unavailableCount = photos.count { it.availability != PhotoAvailability.AVAILABLE }
-    val visiblePhotos = if (needsAttention) photos.filter { it.availability != PhotoAvailability.AVAILABLE } else photos
+    val visiblePhotos = photos.filter { photo ->
+        photo.displayName.contains(query.trim(), ignoreCase = true) && when (filter) {
+            1 -> photo.manualPersonIds.isNotEmpty()
+            2 -> photo.availability != PhotoAvailability.AVAILABLE
+            else -> true
+        }
+    }
     PhotoGrid {
         item(span = { GridItemSpan(maxLineSpan) }) {
             Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                Text("${photos.size} event photos", style = MaterialTheme.typography.titleLarge)
-                Text("Chosen by you. Originals stay on this phone.", style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant)
+                SectionHeading("${photos.size} event photos", "Chosen by you. Originals stay on this phone.")
                 FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     Button(onClick = { importEventId = event.id; policy = "photos" }, enabled = !busy,
                         modifier = Modifier.heightIn(min = 48.dp)) { Text("Choose photos") }
                     TextButton(onClick = { showOptions = !showOptions }, modifier = Modifier.heightIn(min = 48.dp)) {
                         Text(if (showOptions) "Hide options" else "Library options")
                     }
+                    if (photos.isNotEmpty()) TextButton(onClick = { searching = !searching; if (!searching) query = "" },
+                        modifier = Modifier.heightIn(min = 48.dp)) { Text(if (searching) "Close search" else "Search") }
                 }
+                if (searching) SearchPhotos(query, { query = it })
                 if (showOptions) {
                     if (photos.isNotEmpty()) OutlinedButton(onClick = model::scanFaces, enabled = !busy,
                         modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp)) { Text("Find faces in selected photos") }
@@ -96,9 +106,11 @@ internal fun LocalPhotosPage(model: AppModel, state: AppState, event: Event, bus
         }
         if (photos.isNotEmpty()) item(span = { GridItemSpan(maxLineSpan) }) {
             FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                FilterChip(selected = !needsAttention, onClick = { needsAttention = false },
+                FilterChip(selected = filter == 0, onClick = { filter = 0 },
                     label = { Text("All ${photos.size}") }, modifier = Modifier.heightIn(min = 48.dp))
-                FilterChip(selected = needsAttention, onClick = { needsAttention = true },
+                FilterChip(selected = filter == 1, onClick = { filter = 1 },
+                    label = { Text("Tagged ${photos.count { it.manualPersonIds.isNotEmpty() }}") }, modifier = Modifier.heightIn(min = 48.dp))
+                FilterChip(selected = filter == 2, onClick = { filter = 2 },
                     label = { Text("Check $unavailableCount") }, modifier = Modifier.heightIn(min = 48.dp))
             }
         }
@@ -106,7 +118,9 @@ internal fun LocalPhotosPage(model: AppModel, state: AppState, event: Event, bus
             Panel("The night starts here", "Add the photos you want your verified event friends to find. You can add more after the next stop.")
         }
         else if (visiblePhotos.isEmpty()) item(span = { GridItemSpan(maxLineSpan) }) {
-            Panel("Nothing to check", "No selected photos currently need attention.")
+            Panel("No photos in this view", "Try a different filter or photo name.") {
+                TextButton(onClick = { filter = 0; query = "" }, modifier = Modifier.heightIn(min = 48.dp)) { Text("Show all photos") }
+            }
         }
         items(visiblePhotos, key = { it.id }) { photo ->
             val label = if (photo.availability != PhotoAvailability.AVAILABLE) "Check access"

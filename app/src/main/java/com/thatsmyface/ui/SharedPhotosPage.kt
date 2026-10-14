@@ -16,7 +16,6 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.grid.GridItemSpan
 import androidx.compose.foundation.lazy.grid.items
-import androidx.compose.foundation.selection.toggleable
 import androidx.compose.material3.Button
 import androidx.compose.material3.Badge
 import androidx.compose.material3.Card
@@ -25,10 +24,10 @@ import androidx.compose.material3.FilterChip
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
-import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
@@ -38,7 +37,6 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.thatsmyface.AppModel
@@ -47,16 +45,20 @@ import com.thatsmyface.data.Event
 import com.thatsmyface.data.MatchDecision
 import com.thatsmyface.data.MatchKind
 import com.thatsmyface.data.PhotoOffer
+import com.thatsmyface.data.PhotoAvailability
 import com.thatsmyface.data.Transfer
 import com.thatsmyface.data.TransferDirection
 import com.thatsmyface.data.TransferStatus
 import com.thatsmyface.data.SavedCopyAvailability
+import com.thatsmyface.data.transferKey
 import com.thatsmyface.nearby.PeerStatus
 
 @Composable
 @OptIn(ExperimentalLayoutApi::class)
-internal fun PhotosPage(model: AppModel, state: AppState, event: Event, busy: Boolean) {
+internal fun PhotosPage(model: AppModel, state: AppState, event: Event, busy: Boolean,
+    openFriends: () -> Unit, openProfile: () -> Unit) {
     var selected by rememberSaveable(event.id) { mutableIntStateOf(0) }
+    var focusedTransfer by rememberSaveable(event.id) { mutableStateOf<String?>(null) }
     val pages = rememberSaveableStateHolder()
     val approvals = state.transfers.count { it.eventId == event.id && it.needsOwnerDecision() }
     Column(Modifier.fillMaxSize()) {
@@ -77,8 +79,11 @@ internal fun PhotosPage(model: AppModel, state: AppState, event: Event, busy: Bo
             pages.SaveableStateProvider("${event.id}:$selected") {
                 when (selected) {
                     0 -> LocalPhotosPage(model, state, event, busy)
-                    1 -> FoundPhotos(model, state, event, busy)
-                    else -> TransfersPage(model, state, event, busy)
+                    1 -> FoundPhotos(model, state, event, busy, openFriends, openProfile, openRequested = {
+                        focusedTransfer = it
+                        selected = 2
+                    })
+                    else -> TransfersPage(model, state, event, busy, focusedTransfer, onFocusConsumed = { focusedTransfer = null })
                 }
             }
         }
@@ -86,8 +91,13 @@ internal fun PhotosPage(model: AppModel, state: AppState, event: Event, busy: Bo
 }
 
 @Composable
-private fun FoundPhotos(model: AppModel, state: AppState, event: Event, busy: Boolean) {
-    var showAll by rememberSaveable(event.id) { mutableStateOf(false) }
+@OptIn(ExperimentalLayoutApi::class)
+private fun FoundPhotos(model: AppModel, state: AppState, event: Event, busy: Boolean,
+    openFriends: () -> Unit, openProfile: () -> Unit, openRequested: (String) -> Unit) {
+    var filter by rememberSaveable(event.id) { mutableIntStateOf(0) }
+    var query by rememberSaveable(event.id) { mutableStateOf("") }
+    var searching by rememberSaveable(event.id) { mutableStateOf(false) }
+    var showScanDetails by rememberSaveable(event.id) { mutableStateOf(false) }
     var selectedOffer by rememberSaveable(event.id) { mutableStateOf<String?>(null) }
     val summary by model.scanSummary.collectAsStateWithLifecycle()
     val nearby by model.nearbyPeers.collectAsStateWithLifecycle()
@@ -96,28 +106,62 @@ private fun FoundPhotos(model: AppModel, state: AppState, event: Event, busy: Bo
     val sharing = active && sessionEvent == event.id
     val connectedFriends = if (sharing) nearby.count { it.status == PeerStatus.VERIFIED } else 0
     val eventOffers = state.offers.filter { it.eventId == event.id }
+    val localPhotos = state.photos.count { it.eventId == event.id && it.availability == PhotoAvailability.AVAILABLE }
+    val enrolled = !state.profile?.faceRefs.isNullOrEmpty()
     val receivedCount = eventOffers.count { it.ownerId != state.profile?.id }
-    val offers = eventOffers.filter {
-        showAll || it.decision == MatchDecision.CONFIRMED || (it.match != MatchKind.AVAILABLE && it.decision != MatchDecision.REJECTED)
+    val suggested = eventOffers.filter {
+        it.decision == MatchDecision.CONFIRMED || (it.match != MatchKind.AVAILABLE && it.decision != MatchDecision.REJECTED)
     }
+    val uncertain = eventOffers.filter { it.match == MatchKind.UNCERTAIN && it.decision == MatchDecision.NONE }
+    val confirmed = eventOffers.filter { it.decision == MatchDecision.CONFIRMED }
+    val filtered = when (filter) { 1 -> uncertain; 2 -> confirmed; 3 -> eventOffers; else -> suggested }
+    val offers = filtered.filter { it.displayName.contains(query.trim(), ignoreCase = true) ||
+        ownerName(state, event, it.ownerId).contains(query.trim(), ignoreCase = true) }
     PhotoGrid {
-        item(span = { GridItemSpan(maxLineSpan) }) { Panel("${offers.size} photos to explore", "$receivedCount from friends · $connectedFriends friends connected") {
-            Text(when {
-                !sharing -> "Sharing is off. Open Friends on both phones, start this event's sharing, and approve matching codes to receive photos."
-                connectedFriends == 0 -> "Finish pairing in Friends on both phones. Join by the same QR invitation and approve matching codes before photos can arrive."
-                receivedCount == 0 -> "Connected, with no previews received yet. Ask your friend to select event photos and reconnect, or tap Resend my event photos in Friends."
-                else -> "Tap a photo to check the match or request its original. Each original needs its owner's approval."
-            }, style = MaterialTheme.typography.bodyMedium)
-            Row(Modifier.fillMaxWidth().heightIn(min = 48.dp).toggleable(showAll, role = Role.Switch,
-                onValueChange = { showAll = it }), verticalAlignment = Alignment.CenterVertically) {
-                Text("Show all event previews", Modifier.weight(1f).padding(end = 12.dp))
-                Switch(showAll, onCheckedChange = null)
+        item(span = { GridItemSpan(maxLineSpan) }) {
+            Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                SectionHeading("Find your moments", "$receivedCount previews from friends · $connectedFriends friends connected")
+                FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    if (!sharing || connectedFriends == 0) TextButton(onClick = openFriends,
+                        modifier = Modifier.heightIn(min = 48.dp)) { Text(if (sharing) "Finish pairing" else "Connect with friends") }
+                    if (eventOffers.isNotEmpty()) TextButton(onClick = { searching = !searching; if (!searching) query = "" },
+                        modifier = Modifier.heightIn(min = 48.dp)) { Text(if (searching) "Close search" else "Search") }
+                    if (eventOffers.isNotEmpty() && localPhotos > 0) TextButton(
+                        onClick = if (enrolled) model::scanFaces else openProfile, enabled = !busy,
+                        modifier = Modifier.heightIn(min = 48.dp)) { Text(if (enrolled) "Find me in my photos" else "Set up face matching") }
+                    if (summary != null) TextButton(onClick = { showScanDetails = !showScanDetails },
+                        modifier = Modifier.heightIn(min = 48.dp)) { Text(if (showScanDetails) "Hide scan details" else "Scan details") }
+                }
+                if (searching) SearchPhotos(query, { query = it }, "Search photo names or friends")
+                if (showScanDetails) summary?.let { Text(it, style = MaterialTheme.typography.bodySmall) }
+                FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    listOf("For you ${suggested.size}", "Uncertain ${uncertain.size}", "Confirmed ${confirmed.size}", "All previews ${eventOffers.size}").forEachIndexed { index, label ->
+                        FilterChip(selected = filter == index, onClick = { filter = index },
+                            label = { Text(label) }, modifier = Modifier.heightIn(min = 48.dp))
+                    }
+                }
             }
-            summary?.let { Text(it, style = MaterialTheme.typography.bodySmall) }
-        } }
+        }
         if (offers.isEmpty()) item(span = { GridItemSpan(maxLineSpan) }) {
-            if (eventOffers.isEmpty()) Panel("No event previews yet", "Select photos in On my phone or connect with a friend who has selected photos. Reference selfies in You are optional for browsing all previews.")
-            else Panel("No matching photos shown", "There are event previews, but none match the current filter. Turn on Show all event previews to review them and mark photos as yours.")
+            when {
+                query.isNotBlank() -> Panel("No photos found", "Try another photo name or friend.") {
+                    TextButton(onClick = { query = "" }, modifier = Modifier.heightIn(min = 48.dp)) { Text("Clear search") }
+                }
+                eventOffers.isEmpty() -> Panel("Your moments will appear here", when {
+                    localPhotos > 0 && enrolled -> "Your selected photos are ready. Run matching here to look for yourself on this phone."
+                    localPhotos > 0 -> "Add a few reference selfies to find yourself in your selected photos, or connect with friends to browse their previews."
+                    connectedFriends > 0 -> "Ask your friend to select event photos or use Resend my event photos in Friends."
+                    else -> "Select photos in On my phone, or connect with friends who have selected theirs. Only verified event friends can exchange previews."
+                }) {
+                    if (localPhotos > 0) Button(onClick = if (enrolled) model::scanFaces else openProfile, enabled = !busy,
+                        modifier = Modifier.heightIn(min = 48.dp)) { Text(if (enrolled) "Find me in my photos" else "Set up face matching") }
+                }
+                else -> Panel("No photos in this view", "Explore all event previews to find missed moments, then mark the photos you're in.") {
+                    Button(onClick = { filter = 3 }, modifier = Modifier.heightIn(min = 48.dp)) { Text("Show all event previews") }
+                    if (state.profile?.faceRefs.isNullOrEmpty()) TextButton(onClick = openProfile,
+                        modifier = Modifier.heightIn(min = 48.dp)) { Text("Set up face matching") }
+                }
+            }
         }
         items(offers, key = { it.key }) { offer ->
             PhotoTile(offer.displayName, matchLabel(offer), ownerName(state, event, offer.ownerId),
@@ -141,15 +185,16 @@ private fun FoundPhotos(model: AppModel, state: AppState, event: Event, busy: Bo
                     it.photoId == offer.photoId && it.direction == TransferDirection.RECEIVE }
                 Text("The owner must be connected and approve the original. Track it in Requested.", style = MaterialTheme.typography.bodySmall)
                 Button(onClick = {
-                    if (download?.status == TransferStatus.COMPLETE && download.savedCopyAvailability != SavedCopyAvailability.MISSING) model.checkSavedPhoto(download)
-                    else model.requestPhoto(offer)
-                }, enabled = !busy && (download == null || download.status in
-                    setOf(TransferStatus.FAILED, TransferStatus.CANCELLED, TransferStatus.REJECTED, TransferStatus.WAITING, TransferStatus.COMPLETE)),
-                    modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp)) {
+                    if (download == null || download.status in setOf(TransferStatus.FAILED, TransferStatus.CANCELLED,
+                            TransferStatus.REJECTED, TransferStatus.WAITING) || download.savedCopyAvailability == SavedCopyAvailability.MISSING) {
+                        model.requestPhoto(offer)
+                    }
+                    selectedOffer = null
+                    state.profile?.let { openRequested(transferKey(event.id, offer.ownerId, offer.photoId, it.id)) }
+                }, enabled = !busy, modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp)) {
                     Text(when (download?.status) {
-                        TransferStatus.COMPLETE -> if (download.savedCopyAvailability == SavedCopyAvailability.MISSING) "Request original again" else "Check saved copy"
-                        TransferStatus.AWAITING_APPROVAL -> "Awaiting owner approval"
-                        TransferStatus.QUEUED, TransferStatus.TRANSFERRING -> "Download in progress"
+                        TransferStatus.COMPLETE -> if (download.savedCopyAvailability == SavedCopyAvailability.MISSING) "Request original again" else "View saved original"
+                        TransferStatus.AWAITING_APPROVAL, TransferStatus.QUEUED, TransferStatus.TRANSFERRING -> "View request"
                         TransferStatus.WAITING -> "Retry when friend is nearby"
                         else -> "Request original"
                     })
@@ -166,7 +211,7 @@ private fun matchLabel(offer: PhotoOffer): String = when {
     offer.match == MatchKind.SUGGESTED -> "Suggested"
     offer.match == MatchKind.UNCERTAIN -> "Please check"
     offer.match == MatchKind.MANUAL -> "Tagged as you"
-    else -> "No face match"
+    else -> "Event preview"
 }
 
 private fun ownerName(state: AppState, event: Event, ownerId: String): String =
@@ -175,11 +220,21 @@ private fun ownerName(state: AppState, event: Event, ownerId: String): String =
 
 @Composable
 @OptIn(ExperimentalLayoutApi::class)
-private fun TransfersPage(model: AppModel, state: AppState, event: Event, busy: Boolean) {
+private fun TransfersPage(model: AppModel, state: AppState, event: Event, busy: Boolean,
+    focusedTransfer: String?, onFocusConsumed: () -> Unit) {
     var selectedTransfer by rememberSaveable(event.id) { mutableStateOf<String?>(null) }
     var filter by rememberSaveable(event.id) { mutableIntStateOf(0) }
     var showSent by rememberSaveable(event.id) { mutableStateOf(false) }
+    var query by rememberSaveable(event.id) { mutableStateOf("") }
+    var searching by rememberSaveable(event.id) { mutableStateOf(false) }
+    var showFolder by rememberSaveable(event.id) { mutableStateOf(false) }
     val transfers = state.transfers.filter { it.eventId == event.id }
+    LaunchedEffect(focusedTransfer, transfers) {
+        if (focusedTransfer != null && transfers.any { it.key == focusedTransfer }) {
+            selectedTransfer = focusedTransfer
+            onFocusConsumed()
+        }
+    }
     val approvals = transfers.filter { it.needsOwnerDecision() }
     val received = transfers.filter { it.direction == TransferDirection.RECEIVE }
     val sent = transfers.filter { it.direction == TransferDirection.SEND && !it.needsOwnerDecision() }
@@ -190,7 +245,9 @@ private fun TransfersPage(model: AppModel, state: AppState, event: Event, busy: 
         1 -> it.status == TransferStatus.COMPLETE
         2 -> it.status != TransferStatus.COMPLETE
         else -> true
-    } }.sortedBy { it.status == TransferStatus.COMPLETE }
+    } }.filter { it.displayName.contains(query.trim(), ignoreCase = true) ||
+        ownerName(state, event, it.ownerId).contains(query.trim(), ignoreCase = true)
+    }.sortedBy { it.status == TransferStatus.COMPLETE }
     PhotoGrid {
         if (approvals.isNotEmpty()) item(span = { GridItemSpan(maxLineSpan) }) {
             Panel("Needs your approval", "${approvals.size} requests from friends. Approve only originals you want to share, including any location metadata.")
@@ -228,7 +285,18 @@ private fun TransfersPage(model: AppModel, state: AppState, event: Event, busy: 
             TransferTile(model, state, event, transfer) { selectedTransfer = transfer.key }
         }
         item(span = { GridItemSpan(maxLineSpan) }) {
-            Panel("Your requested photos", "New originals also appear in your gallery in Pictures/ThatsMyFace/Requested. Earlier downloads stay in their original folder.") {
+            Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                SectionHeading("Your requested photos", "$completedCount received · ${received.size - completedCount} requests")
+                FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    if (received.isNotEmpty()) TextButton(onClick = { searching = !searching; if (!searching) query = "" },
+                        modifier = Modifier.heightIn(min = 48.dp)) { Text(if (searching) "Close search" else "Search") }
+                    TextButton(onClick = { showFolder = !showFolder }, modifier = Modifier.heightIn(min = 48.dp)) {
+                        Text(if (showFolder) "Hide folder details" else "Where are photos saved?")
+                    }
+                }
+                if (searching) SearchPhotos(query, { query = it }, "Search photo names or friends")
+                if (showFolder) Text("New originals appear in your gallery's Requested album, in Pictures/ThatsMyFace/Requested. Earlier downloads stay in their original folder.",
+                    style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                 FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     listOf("All ${received.size}", "Received $completedCount", "Requests ${received.size - completedCount}").forEachIndexed { index, label ->
                         FilterChip(selected = filter == index, onClick = { filter = index },
@@ -323,6 +391,13 @@ private fun TransferActions(model: AppModel, state: AppState, transfer: Transfer
     val friend = state.peers.find { it.peerId == otherId && it.eventId == transfer.eventId }?.nickname ?: "Friend"
     Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
         Text("${transferStatus(transfer)} · ${if (sending) "To" else "From"} $friend", color = MaterialTheme.colorScheme.secondary)
+        if (transfer.status == TransferStatus.AWAITING_APPROVAL && !sending) {
+            Text("Ask $friend to open Photos → Requested and tap Approve original on their phone. Keep both apps open.",
+                style = MaterialTheme.typography.bodyMedium)
+        } else if (transfer.status == TransferStatus.WAITING) {
+            Text("Reconnect in Friends on both phones and compare the codes again. Retry if this request is still waiting.",
+                style = MaterialTheme.typography.bodyMedium)
+        }
         transfer.error?.let { Text(it, style = MaterialTheme.typography.bodyMedium) }
         if (transfer.status in setOf(TransferStatus.QUEUED, TransferStatus.TRANSFERRING)) {
             LinearProgressIndicator(progress = { transferProgress(transfer) },

@@ -91,7 +91,7 @@ class PhotoBrowsingTest {
             compose.setContent {
                 val state by model.state.collectAsState()
                 val busy by model.busy.collectAsState()
-                MaterialTheme { PhotosPage(model, state, event, busy) }
+                MaterialTheme { PhotosPage(model, state, event, busy, openFriends = {}, openProfile = {}) }
             }
             compose.onNodeWithText("1 request needs your approval").performClick()
             compose.onNodeWithText("Approve original").performScrollTo().performClick()
