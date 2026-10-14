@@ -2,6 +2,8 @@
 
 Use two consenting adults, two Android 10+ phones with compatible Google Play services, and test media you can share. Record phone models, Android/Play services versions, APK commit, and result. Do not export face vectors or private media in bug reports.
 
+The [illustrated PDF](ThatsMyFace-Walkthrough.pdf) has a shorter first-run checklist and fillable result fields. For automated checks on a personal phone, use the separate `-PisolatedDeviceChecks=true` debug install described in the README.
+
 - [ ] Install the same APK, choose different nicknames, create an event, and scan its QR invitation. Relaunch and check persistence.
 - [ ] Deny then allow nearby permissions. With Bluetooth and Wi-Fi on, start sharing on both phones. Compare identical digits and accept both. Reject another pairing and confirm no previews appear.
 - [ ] Select a few event images and an event folder. Verify unrelated gallery images are absent. Rescan only the selected folder and subfolders.
@@ -10,6 +12,7 @@ Use two consenting adults, two Android 10+ phones with compatible Google Play se
 - [ ] Request an original. Verify the owner sees an approval request and no original moves before approval. Approve and check progress, destination, original byte count, and SHA-256 equality.
 - [ ] Reject and cancel requests. Attempt a different event and a removed peer. Verify access stays denied and no cancelled transfer becomes complete on a late message.
 - [ ] Switch off or disconnect the source phone mid-transfer. Verify waiting/failed state and no fake completed download. Reconnect, verify again, and retry.
+- [ ] Approve a request while its receiver is away. Reconnect and compare codes, then retry from the owner's phone. Repeat an interrupted approved transfer from each side; neither phone should remain queued or transferring after a reported failure.
 - [ ] Relaunch either app mid-transfer. Retry twice and confirm only one saved copy. Interrupt immediately after saving but before receipt to check duplicate prevention.
 - [ ] Check an intact received copy and confirm exactly one saved file remains. Delete only that copy through Android's media controls, check again, and verify a replacement needs fresh owner approval and matches the original bytes. The source must remain unchanged.
 - [ ] Change a received test copy, then check it. Verify the app preserves it and blocks another download until you restore or remove it. Make a received copy unreadable, verify no duplicate is saved, restore access, and check again.
@@ -23,6 +26,7 @@ One phone plus an emulator, or two emulators using the real Nearby SDK, does not
 ## Photo browsing and request visibility
 
 - [ ] Browse at least 100 selected photos. Open one near the end, close details, and switch photo tabs without losing your place. Repeat at large font size.
+- [ ] Search for a late photo by name, then search Of me by friend. Check Uncertain, Confirmed, and All previews. A new request must open its status even if Requested previously showed only Received photos.
 - [ ] Confirm one live friend card after reconnecting. Manage event access separately.
 - [ ] Request an original and use the owner's approval shortcut in Photos. Check progress and retry from Requested.
 - [ ] Find new received originals in Photos > Requested and the gallery Requested album. Existing downloads should remain readable without duplication.

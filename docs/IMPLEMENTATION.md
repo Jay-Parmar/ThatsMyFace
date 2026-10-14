@@ -10,7 +10,7 @@
 - E: Privacy deletion, local feedback/export, readable dark UI, setup/privacy/model documentation, and two-phone checklist implemented.
 - Real bundled YuNet/SFace detection, alignment, and embeddings execute on host, Android 16 emulator, and physical Android 16 phone.
 - Local persistence, original byte preservation, duplicate saves, revoked provider access, and cancelled save tested on emulator.
-- Local build/lint, 86 JVM tests, and 46 Android instrumentation tests passed on API 29 after the gallery changes. Model tests cover degraded images and orientation. CI covers API 29 and API 36.
+- Current build/lint and 88 JVM tests passed. All 58 Android tests passed on the physical A142 and in CI on API 29 and API 36. Model tests cover degraded images and orientation.
 - Integrated GitHub build, model, and emulator jobs passed after the recovery fixes. The earlier APK installed and launched on the available physical phone, with working Nearby startup.
 - Production Nearby SDK on two isolated API 36 emulators passed pairing, opt-in reference exchange, source-side recognition, approval/rejection, original byte integrity, persisted waiting state, reconnect/retry, and future-access removal.
 - Saved-copy checks distinguish intact, missing, changed, and unreadable copies. Missing copies require a fresh request and owner approval; an intact copy does not produce another download.
@@ -24,14 +24,22 @@
 - Adaptive photo grids, saved tab positions, clear approval shortcuts, and a separate Requested gallery replace the long photo cards. New originals use Pictures/ThatsMyFace/Requested with legacy-copy recovery.
 - Control messages wait for actual SDK delivery or report a retryable failure. Stale disconnected endpoint cards are removed. The screen stays awake only during foreground sharing.
 - Physical A142 and Jay Ultra joined by QR and completed verification. The user confirmed remote previews and an original download after approving it on the owner phone.
+- Persisted event selection, reciprocal connection readiness, timed-out handshakes, and failed-save recovery have behavioral regressions.
+- Revised event dashboard, searchable galleries, saved filters, direct local recognition, and request details tested with 120-photo fixtures. Four gallery interaction tests also passed at 320dp width and 150% font size.
+- Isolated physical testing uses a separate app ID and preserves the ordinary installation and its private data.
+- Owner-side retry now resumes an approved waiting or failed request, and a sender enqueue failure reaches both phones. Four paired-controller regressions passed on the physical phone.
+- Updated production Nearby SDK checks on two API 36 emulators verified real matching, rejection, persisted offline approval, owner retry, exact original integrity, and one saved copy after restart.
+- The ordinary APK is installed on A142 with its ten selected Device test photos preserved, event selection restored, and sharing off. Temporary physical test fixtures and Check installations were removed.
+- Ten-page illustrated PDF walkthrough delivered with six fixture app captures, a two-phone run card, troubleshooting, sixteen blank checkboxes, and five editable result fields. All pages were rendered and reviewed.
 
 ## Pending
-- Repeat pairing/download checks on the updated physical phones. The updated APK is installed on A142; Jay Ultra update is pending.
+- Repeat pairing/download checks on two updated physical phones.
 - Finish physical disconnection/retry, duplicate prevention, permission revocation, and offline acceptance.
 - The user reviewed real-photo suggestions on the available phone; counts of incorrect or missed suggestions are still unreported. Aggregate results establish execution, not accuracy.
 - Physical acceptance and low-light recognition evaluation remain as listed below.
 
 ## Blocked
+- The replacement POCO requires a SIM to enable USB installation and automated input. Its APK is available in Downloads for later manual installation; automated two-phone acceptance cannot run on that device.
 - Friend-group accuracy and all-night field testing require consenting participants.
 
-Implementation is on `feat/core-sharing` in draft PR #2, stacked on `feat/local-events` in draft PR #1. This is not yet a completed, physically validated v1.
+The field-test and walkthrough milestone is in [draft PR #3](https://github.com/Jay-Parmar/ThatsMyFace/pull/3), on `feat/field-test-walkthrough`. It is stacked on `feat/core-sharing` in draft PR #2 and `feat/local-events` in draft PR #1. This is not yet a completed, physically validated v1.

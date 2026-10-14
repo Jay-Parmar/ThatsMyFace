@@ -1,69 +1,53 @@
 # Validation record
 
-## Gallery and request update
+## Version 0.2.0, 14 October 2026
 
-- Source `d68ba38`: debug APK/test APK builds and lint passed; all 86 JVM tests passed, including 12 control-message delivery/cancellation regressions.
-- All 46 Android tests passed on a local API 29 emulator at 320 by 640: 14 storage, 17 paired-session, 8 recognition, 2 application-flow, 2 gallery interaction, 2 preview, and 1 real picker test. The gallery test exercises 120 lazy items, selection and retained position; the approval test checks persisted approval while the friend is offline. An initial viewport assumption failed with an old density override; the test now uses an explicit phone-sized viewport.
-- A temporary emulator-only fixture exercised the production UI with 120 selected references, 120 offers, waiting requests, and four actual MediaStore saved copies. Grid, detail, and approval controls were visually checked at normal size and at 320dp with 150% font. Exact fixture cleanup passed; no fixture seeder ships in the source or APK.
-- Storage checks verify the Requested destination, legacy-folder recovery, original bytes, duplicate prevention, protected user edits, and saved thumbnails after source deletion. A new session test verifies declining an unapproved request after disconnection.
-- The APK was installed on the A142 without clearing data. Device test and its saved photos remain available; sharing startup and its keep-screen-on window flag were checked. The updated transport still needs a repeated two-phone pairing/download check. Earlier physical results below used the preceding APK.
+Application source: `19775d4`, on `feat/field-test-walkthrough`. [Draft PR #3](https://github.com/Jay-Parmar/ThatsMyFace/pull/3) depends on PR #2. No private photos, face references, or credentials are included in these results or the walkthrough.
 
-## Run and passed
+| Check | Environment | Result |
+| --- | --- | --- |
+| Debug APK, test APK, lint | JDK 17, Gradle 8.13, AGP 8.13.2 | Passed |
+| JVM behavior tests | Local and CI | 88 passed |
+| Earlier full Android suite | Local API 29 and API 36 emulators, source `146ae3c` | 54 passed on each |
+| Final build, model and Android checks | [CI run 38568829940](https://github.com/Jay-Parmar/ThatsMyFace/actions/runs/38568829940) | All four jobs passed; 58 Android tests each on API 29 and API 36, none failed or skipped |
+| Final physical Android suite | Nothing A142 / Android 16, isolated test app | 58 passed |
+| Large-text gallery behavior | 320dp width, 150% font, API 29 | Four interaction tests passed; layout visually reviewed |
+| Host model execution | Bundled YuNet/SFace, licensed fixtures | Checksums, detection, alignment, embeddings, degraded and multi-face inputs passed |
+| Production Nearby startup | A142, isolated app | Permission prompt, advertising/discovery startup and explicit stop passed |
+| Production Nearby recovery | Two isolated API 36 emulators | Pairing, real recognition, rejection, persisted offline approval, owner retry, intact original, duplicate check and access revocation passed |
+| Updated two-phone Nearby journey | A142 and replacement POCO / Android 14 | Blocked: POCO requires a SIM to enable USB installation and automated input |
 
-- Foundation staged snapshot: `assembleDebug lintDebug` using JDK 17, Gradle 8.13, AGP 8.13.2, Android SDK 36.
-- Main-worktree build: `assembleDebug assembleDebugAndroidTest testDebugUnitTest lintDebug` passed. Lint reported no errors; reviewed warnings include pinned dependency versions and guarded platform APIs.
-- JVM suite: 74 tests passed, covering invitations, encryption, event access, integrity, recognition thresholds and ambiguity, preprocessing dimensions, wire validation, transfer transitions, retries, saved-copy admission, and compatibility with older persisted transfers.
-- Host recognition smoke: bundled model checksums, real YuNet/SFace execution, alignment, 128-value embedding, recompressed same-face match, multiple faces, and no face.
-- Foundation GitHub Actions: build, lint, and APK artifact passed after replacing the retired SDK `tools` package with explicit supported packages.
-- Integrated [GitHub Actions run 37963727072](https://github.com/Jay-Parmar/ThatsMyFace/actions/runs/37963727072), source commit `ea08a30`, passed all four jobs: build/lint/JVM checks, host model execution, and all 41 instrumentation tests on API 29 and API 36. This includes the real system-picker regression and Android 10/11 compatibility fix. The debug APK and test reports are attached to the run.
-- Android 10 / API 29 local emulator and Android 16 / API 36 CI emulator: all 42 instrumentation tests passed on each. Includes 13 storage tests, 8 actual-model/preprocessing tests, 16 paired-session tests, 2 application-flow tests, 2 preview validation tests, and 1 real system-picker regression. The API 29 local run used CI's 320 by 640 screen size. Run with `adb -s DEVICE_SERIAL shell am instrument -w com.thatsmyface.test/androidx.test.runner.AndroidJUnitRunner` after installing the debug and test APKs on a test installation.
-- The API 29 emulator also passed all 8 model tests with Wi-Fi and cellular data disabled and no active default network. This verifies offline model execution, not offline Nearby pairing.
-- Recognition tests cover EXIF orientations 2 through 8, resized color-correct decoding, small/dark/blurred/washed-out faces, and recovery after an invalid image. Storage tests cover interrupted atomic writes, concurrent updates/saves, missing encryption keys, changed sources, and pending MediaStore saves.
-- Peer revocation tests exposed and verified a fix for prepared outgoing files left in cache. Local and remote revocation now cancel and release payloads even after persisted revocation clears their handles. Late readiness and file delivery cannot complete cancelled requests.
-- The real system picker grants access to a shell-created synthetic JPEG containing GPS metadata. The test checks external ownership, denied access before selection, exact original bytes and GPS after import/snapshot, previews, duplicate prevention, and blocked sharing after grant revocation. It exposed Android 10/11 routing media-document conversion to the wrong provider; those versions now retain the selected document URI. Fixture setup and picker navigation were corrected before passing. A System UI hang on the local API 36 emulator required recovery; no application success is inferred from that failed setup run.
-- A further folder regression covers nested `image/jpg` aliases, exclusion of non-images, selected-tree traversal, and original-byte preservation. The 13 storage tests plus the system-picker test passed together on API 29 and API 36. An earlier local combined run failed the immediate revocation check. The fixture now waits for picker-host destruction and explicitly verifies that Android removed both document and mapped grants before asserting denied reads and blocked sharing. This closes a possible activity-owned grant race without relaxing the application checks.
-- Picker navigation waits for initial root loading and scrolls offscreen drawer entries. This addresses an API 29 CI navigation timeout before selection; original-byte and revocation assertions remain intact.
-- Paired-session tests use two real controllers, encrypted stores, and MediaStore copies with a test-only connection. They cover approval, original integrity, duplicate prevention, reconnect/retry, corruption, readiness ordering, and failed setup cleanup. They do not test the Nearby radio implementation.
-- Application-flow tests exercise selected-photo import, manual correction, actual enrollment and matching, feedback exclusion, missing-photo cleanup, and local deletion using an isolated key and test data.
-- Recovery regression tests cover rapid stop/start, stale reference deletion, and local cancellation despite a failed notification.
-- Saved-copy regressions cover missing, changed, and denied copies, fresh approval after deletion, intact/restored-copy duplicate prevention, and unchanged source bytes.
-- Emulator UI smoke passed at normal and 150% font size, including selected-event persistence, readable system bars, intact navigation labels, and empty states. TalkBack and full device accessibility acceptance remain on the device checklist.
-- Actual Nearby advertising/discovery startup and explicit session stop also passed on the Android 16 emulator after granting the app's requested permission. No radio pairing or original transfer was attempted in that smoke check.
-- Physical Nothing A142 phone, Android 16: debug APK installation, onboarding, profile/event creation, persistence after force-stop/relaunch, and all 4 recognition instrumentation tests passed. Nearby permission approval and actual advertising/discovery startup passed. No second physical phone was available and no friends' photos were used.
-- The earlier debug APK was reinstalled on that phone and launched successfully with the saved profile/event intact. Actual Nearby startup passed again; the session was stopped after testing. These phone checks preceded the saved-copy recovery changes; the latest APK has been checked on emulators.
+The isolated debug option uses `com.thatsmyface.devicecheck`, with a separate Android UID, app data, grants, and test-provider authority. Test fixtures and both Check packages were removed from the Nothing phone afterward. The ordinary APK was rebuilt without this option and installed as an update. The existing Device test event still shows all ten selected photos, its selection survives restart, and sharing remains off. The POCO has the ordinary APK in Downloads for later manual installation.
 
-## Selected photos on the physical phone
+## What the checks exercise
 
-The updated APK was installed on the Nothing A142 without clearing its profile or references. Ten explicitly selected photos initially failed because `setRequireOriginal` changed the exact granted URI. Aggregate on-phone diagnostics confirmed the original selected and mapped URIs were readable, while their query-modified forms were denied. Two files also used the `image/jpg` MIME alias.
+- Event membership and isolation, invitation validation, encrypted persistence, selected-event restoration, migration from older records, and local deletion.
+- Exact system-picker grants, externally owned JPEGs with GPS metadata, folder traversal, missing/revoked/changed files, and original-byte preservation.
+- Actual on-device model execution, EXIF orientation, alignment, conservative decisions, poor reference rejection, multi-face photos, confirmation, rejection, and corrections.
+- Two real sharing controllers with encrypted stores and MediaStore copies, connected by a test-only transport. Cases include reciprocal readiness, handshake timeout, owner approval, corrupt payloads, interrupted requests, retry, duplicates, access revocation, cancellation, and failed acknowledgments. These tests do not verify radios.
+- SDK task cancellation and late callbacks, without terminating the sharing event collector.
+- Owner-initiated retry after offline approval, interruption, failed delivery, and corrupt bytes. A sender enqueue failure now fails both sides instead of leaving the receiver transferring. Terminal decisions and mismatched request identifiers cannot reopen a transfer.
+- Search and filters across 120 photos, event isolation, opening a late tile without losing scroll, persistent approval while offline, and opening a new request even when the Received filter is selected.
+- The Of me empty-state action runs the real model and persists a user-confirmed result after reopening encrypted storage.
 
-After both fixes, all ten photos imported, their imported digests matched the selected-provider bytes, and all ten previews loaded. Local recognition using two saved reference selfies checked 22 faces, produced 2 suggested photos and 3 uncertain photos, and reported no processing failures. Sharing stayed off. After the user's review, a confirmed match remained confirmed after force-stop and relaunch. Counts of wrong or missed suggestions are still unreported, so these results are not an accuracy measurement. No photos, names, URIs, embeddings, or private screenshots were copied into the repository or test reports. Temporary diagnostic instrumentation was removed from the phone.
+Manual emulator checks also covered QR-image joining through Android's file picker, explicit licensed-photo import, and an actual local face suggestion through Of me. Walkthrough screenshots identify seeded gallery/transfer records separately from the real model result. Seeded received copies were created using the real save routine; they are not evidence of a radio transfer.
 
-## A142 and Jay Ultra
+The Android 10 emulator reports Nearby code 8007 and has no `bluetooth_manager` service. It supports storage, model, and UI checks but cannot provide this run's Nearby radio test. No success is inferred from that failure.
 
-Both physical phones joined the same event using the A142 invitation and completed the code check. The A142 displayed a verified live connection; the user confirmed its selected previews appeared on Jay Ultra. Two original requests reached the A142 and still awaited owner approval. After the user approved a request, they confirmed the original downloaded on Jay Ultra. No private file was pulled from either phone, and byte integrity was not independently measured on Jay Ultra.
+The final production Nearby SDK run used two API 36 emulators with licensed synthetic/public fixtures. Matching verification digits preceded acceptance. The receiver obtained two previews, one actual face suggestion and one unmatched no-face image. A declined request saved nothing. A second request was approved while the receiver was disconnected. Its waiting state survived app update/restart, then an owner-side retry after fresh code verification delivered the original. Independent checks found all 791,555 original bytes, the expected SHA-256, and exactly one MediaStore copy in `Pictures/ThatsMyFace/Requested`. A later UI saved-copy check and process restart still found one intact copy. Removing future access ended the connection and removed the receiver's previews; its downloaded original remained intact. Test-owned media was then cleaned up. This tests the real SDK with virtual networking, not physical radio interoperability. The Nothing phone and emulator did not discover each other during a separate attempt.
 
-The same session exposed a stale disconnected endpoint card beside the live connection, and approval controls buried in Downloads. Physical offline operation, interruption recovery, and duplicate prevention still need acceptance checks.
+## Earlier physical and virtual evidence
 
-## Production Nearby SDK on virtual devices
+The user's A142 and Jay Ultra previously joined by QR, compared codes, exchanged previews, and completed an owner-approved original download confirmed by the user. The old UI buried approval actions and retained a stale disconnected endpoint card. That session preceded the current UI and control-message delivery changes. No private original was pulled from Jay Ultra, so its bytes were not independently measured.
 
-Two isolated Android 16 / API 36 emulators used Android Emulator 37.1.11 and Google Play services 25.26.35 (260800-783060121). These checks used the production SDK and virtual radios, without the test-only transport. The tested APK's source is commit `436b76d`, including the invitation-input and saved-copy recovery fixes.
+On the A142, ten explicitly selected private photos imported after exact-URI and JPEG-alias fixes. Two reference selfies processed 22 detected faces, producing two suggestions and three uncertain results with no processing failure. A user-confirmed decision survived restart. Wrong/missed counts remain unreported; these are execution results, not an accuracy measurement. The photos and face data stayed on the phone.
 
-- Both joined the same event through the QR image picker. Only the licensed NASA fixture was selected as a source photo or enrollment reference.
-- Discovery, matching verification digits, and acceptance on both devices passed. Opt-in references produced a source-side recognition suggestion on the other device without a manual tag.
-- A declined request saved no original. After explicit owner approval, a FILE transfer saved exactly one copy. Independent comparison confirmed all 791,555 bytes and SHA-256 matched the licensed source, which remained unchanged.
-- Checking the intact saved copy retained one file. Removing only that received copy through MediaStore was detected and required fresh owner approval to replace it.
-- Force-stopping the owner while approval was pending changed the receiver to Waiting. Waiting survived receiver restart. Both rediscovered and verified each other, then retry and fresh approval delivered one intact replacement.
-- Removing future access disconnected both devices and showed access removed. It did not recall the downloaded copy.
+At source `436b76d`, two isolated Android 16 emulators using the production Nearby SDK passed code verification, opted-in reference exchange, source-side recognition, approval/rejection, restart/retry, duplicate prevention, and future-access removal. An approved NASA fixture transfer preserved all 791,555 bytes and its SHA-256. Virtual radios do not establish physical interoperability or offline behavior.
 
-This establishes production SDK behavior over virtual networking, not physical radio interoperability, performance, or offline operation. No private phone media was used in these checks.
+## Artifact and remaining acceptance
 
-## Artifact
+Ordinary debug APK: `app/build/outputs/apk/debug/app-debug.apk`, version 0.2.0 (code 2).
 
-Local APK: `app/build/outputs/apk/debug/app-debug.apk`. The verified APK SHA-256 is `e7c0c29b69b42dfd154d21c1e48a1b7a18d3bb62b3ce453435b28506c0bd8ac6`. Rebuilding can produce a different debug artifact.
+SHA-256: `fd4a83e3c30d76074a31a87297a75e7fa38478d5c4fde4a917222b382ac41c6a`.
 
-## Required before claiming v1 complete
-
-- Two physical phones: nearby discovery, mutual code verification, consent, original transfer, disconnection/retry, and offline behavior.
-- Consenting friend-group samples: low-light accuracy, wrong and ambiguous suggestions, manual corrections, and accessibility.
-
-One user-confirmed physical download is recorded above. Full physical acceptance is still pending.
+The [illustrated PDF](ThatsMyFace-Walkthrough.pdf) and [two-phone checklist](DEVICE_TESTS.md) cover the remaining physical run. Updated two-phone transfers, offline radio behavior, TalkBack, low-storage handling, and consenting friend-group low-light accuracy still require acceptance. A successful model fixture or controlled transport test does not establish those results.

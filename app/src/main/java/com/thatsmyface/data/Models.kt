@@ -15,6 +15,7 @@ data class AppState(
     val offers: List<PhotoOffer> = emptyList(),
     val transfers: List<Transfer> = emptyList(),
     val feedback: List<Feedback> = emptyList(),
+    val selectedEventId: String? = null,
 )
 
 @Serializable

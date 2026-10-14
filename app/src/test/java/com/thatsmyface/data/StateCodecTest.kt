@@ -44,4 +44,14 @@ class StateCodecTest {
         val withCheck = state.copy(transfers = listOf(completed))
         assertEquals(withCheck, StateCodec.decrypt(StateCodec.encrypt(withCheck, key), key))
     }
+
+    @Test fun olderStateWithoutSelectedEventLoadsAndNewSelectionIsEncrypted() {
+        val event = Event(title = "Fixture event", secret = "a".repeat(64))
+        val selected = state.copy(events = listOf(event), selectedEventId = event.id)
+        val oldRecord = JsonObject(Json.encodeToJsonElement(selected).jsonObject - "selectedEventId")
+        val restored = Json.decodeFromJsonElement<AppState>(oldRecord)
+        assertNull(restored.selectedEventId)
+        assertEquals(selected.events, restored.events)
+        assertEquals(selected, StateCodec.decrypt(StateCodec.encrypt(selected, key), key))
+    }
 }

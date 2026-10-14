@@ -4,6 +4,7 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ColumnScope
 import androidx.compose.foundation.layout.PaddingValues
+import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.heightIn
@@ -44,10 +45,12 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.thatsmyface.AppModel
 import com.thatsmyface.R
+import com.thatsmyface.nearby.PeerStatus
 
 @Composable
 fun ThatsMyFaceApp(model: AppModel) {
@@ -57,7 +60,12 @@ fun ThatsMyFaceApp(model: AppModel) {
     val busy by model.busy.collectAsStateWithLifecycle()
     val message by model.message.collectAsStateWithLifecycle()
     val eventId by model.selectedEventId.collectAsStateWithLifecycle()
+    val sharingActive by model.sharingActive.collectAsStateWithLifecycle()
+    val sharingEventId by model.sharingEventId.collectAsStateWithLifecycle()
+    val nearby by model.nearbyPeers.collectAsStateWithLifecycle()
     val selectedEvent = state.events.find { it.id == eventId }
+    val sharing = sharingActive && sharingEventId == selectedEvent?.id
+    val connected = if (sharing) nearby.count { it.status == PeerStatus.VERIFIED } else 0
     val approvals = state.transfers.count { it.eventId == selectedEvent?.id && it.needsOwnerDecision() }
     var tab by rememberSaveable { mutableIntStateOf(0) }
     var resetConfirmation by remember { mutableStateOf(false) }
@@ -69,19 +77,32 @@ fun ThatsMyFaceApp(model: AppModel) {
         }
     }
     MaterialTheme(colorScheme = darkColorScheme(
-        primary = Color(0xFFD7EC92), onPrimary = Color(0xFF203000), secondary = Color(0xFFAEDFD5),
-        primaryContainer = Color(0xFF34431B), onPrimaryContainer = Color(0xFFE1F3AA),
-        secondaryContainer = Color(0xFF2B4039), onSecondaryContainer = Color(0xFFD2F1E7),
-        background = Color(0xFF101410), surface = Color(0xFF171D17), surfaceVariant = Color(0xFF293127),
-        onSurface = Color(0xFFF0F3E9), onSurfaceVariant = Color(0xFFC3CCBB),
+        primary = Color(0xFFD7EF8B), onPrimary = Color(0xFF213000), secondary = Color(0xFF96DDD1),
+        primaryContainer = Color(0xFF324325), onPrimaryContainer = Color(0xFFE1F3AA),
+        secondaryContainer = Color(0xFF244640), onSecondaryContainer = Color(0xFFD2F1E7),
+        background = Color(0xFF0D1616), surface = Color(0xFF152020), surfaceVariant = Color(0xFF263331),
+        onSurface = Color(0xFFF0F5EF), onSurfaceVariant = Color(0xFFBACCC5),
     )) {
         Surface(Modifier.fillMaxSize()) {
             Scaffold(topBar = {
-                Column(Modifier.fillMaxWidth().statusBarsPadding().padding(20.dp, 12.dp)) {
-                    Text("ThatsMyFace", style = MaterialTheme.typography.titleLarge)
-                    Text(selectedEvent?.title ?: "If you're in it, find it.",
-                        style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.secondary,
-                        maxLines = 1, overflow = TextOverflow.Ellipsis)
+                Column(Modifier.fillMaxWidth().statusBarsPadding().padding(horizontal = 16.dp, vertical = 8.dp)) {
+                    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        Surface(onClick = { tab = 0 }, modifier = Modifier.weight(1f),
+                            color = Color.Transparent, shape = RoundedCornerShape(12.dp)) {
+                            Column(Modifier.heightIn(min = 48.dp).padding(vertical = 4.dp), verticalArrangement = Arrangement.Center) {
+                                Text("ThatsMyFace", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold,
+                                    maxLines = 1, overflow = TextOverflow.Ellipsis)
+                                Text(selectedEvent?.let { "${it.title} ▾" } ?: "If you're in it, find it.",
+                                    style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.secondary,
+                                    maxLines = 1, overflow = TextOverflow.Ellipsis)
+                            }
+                        }
+                        if (state.profile != null) StatusPill(when {
+                            connected > 0 -> "$connected connected"
+                            sharing -> "Looking nearby"
+                            else -> "Sharing off"
+                        }, sharing) { tab = 2 }
+                    }
                     if (busy) LinearProgressIndicator(Modifier.fillMaxWidth().padding(top = 10.dp))
                 }
             }, snackbarHost = { SnackbarHost(snackbar) }, bottomBar = {
@@ -112,13 +133,14 @@ fun ThatsMyFaceApp(model: AppModel) {
                             Text("Opening your photos and events", Modifier.padding(16.dp))
                         }
                         state.profile == null -> Onboarding(model, busy)
-                        tab == 0 -> EventsPage(model, state, selectedEvent, busy) { tab = 1 }
+                        tab == 0 -> EventsPage(model, state, selectedEvent, busy,
+                            openPhotos = { tab = 1 }, openFriends = { tab = 2 }, openProfile = { tab = 3 })
                         tab == 1 -> if (selectedEvent == null) {
                             Page { item { Panel("Pick your gathering", "Create or join an event before adding photos.") {
                                 Button(onClick = { tab = 0 }, modifier = Modifier.heightIn(min = 48.dp)) { Text("Choose an event") }
                             } } }
-                        } else PhotosPage(model, state, selectedEvent, busy)
-                        tab == 2 -> FriendsPage(model, state, selectedEvent, busy)
+                        } else PhotosPage(model, state, selectedEvent, busy, openFriends = { tab = 2 }, openProfile = { tab = 3 })
+                        tab == 2 -> FriendsPage(model, state, selectedEvent, busy, openEvents = { tab = 0 })
                         else -> ProfilePage(model, state, selectedEvent, busy)
                     }
                 }
@@ -142,8 +164,8 @@ internal fun Page(content: LazyListScope.() -> Unit) {
 internal fun Panel(title: String, description: String? = null, content: @Composable ColumnScope.() -> Unit = {}) {
     Card(Modifier.fillMaxWidth(), shape = RoundedCornerShape(22.dp),
         colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = .55f))) {
-        Column(Modifier.padding(20.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-            Text(title, style = MaterialTheme.typography.titleLarge)
+        Column(Modifier.padding(18.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+            Text(title, style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.SemiBold)
             description?.let { Text(it, style = MaterialTheme.typography.bodyMedium,
                 color = MaterialTheme.colorScheme.onSurfaceVariant) }
             content()

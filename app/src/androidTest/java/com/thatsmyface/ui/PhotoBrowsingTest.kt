@@ -77,7 +77,7 @@ class PhotoBrowsingTest {
         val event = Invitations.create("Gallery fixture")
         val profile = Profile(nickname = "Owner fixture")
         val peer = Peer(event.id, newId(), "Friend fixture")
-        val photo = Photo(event.id, uri = "content://com.thatsmyface.test.storagefixture/revoked",
+        val photo = Photo(event.id, uri = "content://${androidx.test.platform.app.InstrumentationRegistry.getInstrumentation().context.packageName}.storagefixture/revoked",
             displayName = "Synthetic fixture", mimeType = "image/png", sha256 = "a".repeat(64), size = 12)
         val request = Transfer(event.id, profile.id, photo.id, peer.peerId, direction = TransferDirection.SEND,
             status = TransferStatus.AWAITING_APPROVAL, displayName = photo.displayName,
@@ -91,7 +91,7 @@ class PhotoBrowsingTest {
             compose.setContent {
                 val state by model.state.collectAsState()
                 val busy by model.busy.collectAsState()
-                MaterialTheme { PhotosPage(model, state, event, busy) }
+                MaterialTheme { PhotosPage(model, state, event, busy, openFriends = {}, openProfile = {}) }
             }
             compose.onNodeWithText("1 request needs your approval").performClick()
             compose.onNodeWithText("Approve original").performScrollTo().performClick()
