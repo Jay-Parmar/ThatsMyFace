@@ -1,0 +1,43 @@
+{
+  "edition": "14 OCT 2026",
+  "app_version": "0.2.0 (debug)",
+  "source_commit": "19775d4",
+  "validation_url": "https://github.com/Jay-Parmar/ThatsMyFace/blob/feat/field-test-walkthrough/docs/VALIDATION.md",
+  "automated": "Build/lint, 88 JVM tests, real-model checks, and CI on API 29/36 passed. All 58 Android tests also passed on the physical Nothing A142.",
+  "device": "Production Nearby SDK on two API 36 emulators passed pairing, recognition, rejection, restart/retry, and an approved original with exact bytes and one saved copy.",
+  "pending": "Two-phone acceptance is blocked by the second phone's USB-install restriction. Physical offline/recovery, TalkBack, and field accuracy remain open.",
+  "screenshots": {
+    "grid": {
+      "file": "screenshots/grid.png",
+      "sha256": "0304e9735fa1adcdd50c9b818ae713a572428290adbdc6c75b70de897e328ed5",
+      "provenance": "Actual app UI on the isolated test installation with 120 synthetic gallery records and six original colored fixtures. Seeded tags and approval states demonstrate UX only, not recognition or transfer proof."
+    },
+    "approval": {
+      "file": "screenshots/approval.png",
+      "sha256": "c643bab8fb5a03578ad89b227f0f41f86f3b9edfe90b71e0a6335a9190508a4f",
+      "provenance": "Actual API 29 emulator UI with synthetic seeded records. Saved copies were created through saveReceived, but transfer states were seeded for UX review and do not prove radio transfer."
+    },
+    "requested": {
+      "file": "screenshots/requested.png",
+      "sha256": "96ddae7ee3105cebf765c6d24f3164ed9c81ee27974b9d05e274735f1412c765",
+      "provenance": "Actual API 29 emulator UI with synthetic seeded records. Saved copies were created through saveReceived, but transfer states were seeded for UX review and do not prove radio transfer."
+    },
+    "profile": {
+      "file": "screenshots/profile.png",
+      "sha256": "339e2a2194cf9610a01555311892a6f302a5231162818c18a4563a5fc2c350b7",
+      "provenance": "Actual API 29 emulator You screen with a synthetic local profile and no face references."
+    },
+    "match": {
+      "file": "screenshots/match.png",
+      "sha256": "08ee80fef074fbd96bd28b04022a317ccab4b5247fd82f5cbee0c9a2e4deb984",
+      "caption": "Actual on-device match using the public-domain NASA test portrait. This verifies execution, not real-world accuracy.<br/>NASA: Eileen Collins, via scikit-image. No endorsement implied.",
+      "provenance": "API 29 isolated app. The licensed NASA astronaut fixture was enrolled through the real FaceEngine and explicitly selected through the Android file picker. Of me > Find me in my photos produced SUGGESTED without manual tagging. NASA portrait: Eileen Collins, public domain via scikit-image. No endorsement implied; original attribution in app/src/androidTest/assets/NOTICE.txt."
+    },
+    "friends": {
+      "file": "screenshots/friends.png",
+      "sha256": "4fc380c4c17c15045360a0623f7f5ca4d5eb01fe060466767e01bc042f4d76af",
+      "caption": "Actual Nearby SDK pairing on two API 36 emulators. This verifies virtual-device behavior, not physical radio interoperability.",
+      "provenance": "Isolated API 36 receiver, paired with a source emulator using the production Google Nearby Connections SDK. Verification digits were compared and matched before accepting on both devices. Both showed Verified and connected, and the receiver had two previews including one actual source-generated SUGGESTED result. No invitation, authentication digits, or private media appear in the capture. Final capture refreshed on source 19775d4 after singular/plural copy fixes."
+    }
+  }
+}
