@@ -137,7 +137,7 @@ class SharingSessionInstrumentedTest {
             assertEquals(SavedCopyAvailability.AVAILABLE, fixture.receiverTransfer()?.savedCopyAvailability)
             assertEquals(completed.requestId, fixture.receiverTransfer()?.requestId)
             assertEquals(1, fixture.ownerLink.filesSent)
-            fixture.receiverStore.update { it.copy(transfers = listOf(completed.copy(savedUri = "content://com.thatsmyface.test.storagefixture/revoked"))) }
+            fixture.receiverStore.update { it.copy(transfers = listOf(completed.copy(savedUri = "content://${androidx.test.platform.app.InstrumentationRegistry.getInstrumentation().context.packageName}.storagefixture/revoked"))) }
             withContext(Dispatchers.Main) { fixture.receiver.retry(requireNotNull(fixture.receiverTransfer())) }
             assertEquals(SavedCopyAvailability.UNREADABLE, fixture.receiverTransfer()?.savedCopyAvailability)
             assertEquals(TransferStatus.COMPLETE, fixture.receiverTransfer()?.status)

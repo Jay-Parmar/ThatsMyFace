@@ -92,7 +92,7 @@ class AppModelInstrumentedTest {
             fixture.act { model.importPhotos("deleted-event", listOf(fixture.source)) }
             assertEquals(1, model.state.value.photos.size)
             assertTrue(model.message.value!!.contains("event"))
-            fixture.act { model.importPhotos(capturedEvent, listOf(Uri.parse("content://com.thatsmyface.test.storagefixture/revoked"))) }
+            fixture.act { model.importPhotos(capturedEvent, listOf(Uri.parse("content://${androidx.test.platform.app.InstrumentationRegistry.getInstrumentation().context.packageName}.storagefixture/revoked"))) }
             assertTrue(model.message.value!!.contains("Access was removed"))
             assertEquals(1, model.state.value.photos.size)
 

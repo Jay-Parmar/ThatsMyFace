@@ -14,7 +14,16 @@ Requires JDK 17, Android SDK platform 36, build tools 35.0.0, and an Android 10+
 adb -s DEVICE_SERIAL install -r app/build/outputs/apk/debug/app-debug.apk
 ```
 
-On macOS/Linux use `./gradlew`. Debug APK: `app/build/outputs/apk/debug/app-debug.apk`. Connected tests use synthetic images and a licensed public-domain fixture, and reset this app's test state. Do not run them against an app installation with data you want to keep.
+On macOS/Linux use `./gradlew`. Debug APK: `app/build/outputs/apk/debug/app-debug.apk`. Connected tests use synthetic images and a licensed public-domain fixture. Use an empty emulator or the isolated test install below, never an installation containing data you want to keep.
+
+To test a personal phone safely, build with `-PisolatedDeviceChecks=true`. This debug-only option installs **ThatsMyFace Check** as `com.thatsmyface.devicecheck`, with separate app data, permissions, and test-provider authority. Select the intended device explicitly:
+
+```powershell
+$env:ANDROID_SERIAL = 'DEVICE_SERIAL'
+.\gradlew.bat -PisolatedDeviceChecks=true connectedDebugAndroidTest
+```
+
+Keep the phone unlocked for system-picker tests. Tests create and clean up their own media fixtures. Remove the property and rebuild `assembleDebug` before distributing the ordinary app. The isolated and ordinary APKs share the build output path.
 
 ## Try it
 

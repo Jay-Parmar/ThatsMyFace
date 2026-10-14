@@ -178,7 +178,7 @@ class StorageInstrumentedTest {
 
     @Test fun revokedProviderAccessIsActionableAndBlocksSharing() = runBlocking {
         val fixture = PrivateFixture(context)
-        val photo = Photo(eventId = "event", uri = "content://com.thatsmyface.test.storagefixture/revoked",
+        val photo = Photo(eventId = "event", uri = "content://${androidx.test.platform.app.InstrumentationRegistry.getInstrumentation().context.packageName}.storagefixture/revoked",
             displayName = "synthetic.jpg", mimeType = "image/jpeg", size = 123, sha256 = "a".repeat(64))
         try {
             val files = PhotoFiles(fixture.context)
@@ -249,7 +249,7 @@ class StorageInstrumentedTest {
             context.contentResolver.delete(received, null, null)
             received = null
             assertEquals(SavedCopyAvailability.MISSING, files.checkSavedCopy(completed).availability)
-            val denied = completed.copy(savedUri = "content://com.thatsmyface.test.storagefixture/revoked")
+            val denied = completed.copy(savedUri = "content://${androidx.test.platform.app.InstrumentationRegistry.getInstrumentation().context.packageName}.storagefixture/revoked")
             assertEquals(SavedCopyAvailability.UNREADABLE, files.checkSavedCopy(denied).availability)
             assertEquals(PhotoAvailability.AVAILABLE, files.checkAvailability(photo).availability)
         } finally {
