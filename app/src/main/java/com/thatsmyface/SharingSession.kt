@@ -39,6 +39,7 @@ import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.currentCoroutineContext
@@ -53,11 +54,13 @@ class SharingSession(
     private val scope: CoroutineScope,
     private val notify: (String) -> Unit,
     val transport: NearbyLink = NearbyTransport(context, scope),
+    private val handshakeTimeoutMillis: Long = 30_000,
 ) {
     val eventId = MutableStateFlow<String?>(null)
     private val identities = mutableMapOf<String, String>()
     private val digits = mutableMapOf<String, String>()
     private val readyPeers = mutableSetOf<String>()
+    private val handshakeJobs = mutableMapOf<String, Job>()
     private val refreshJobs = mutableMapOf<String, Job>()
     private val receivingJobs = mutableMapOf<Long, Job>()
     private val prepared = mutableMapOf<Long, Pair<PreparedFile, File>>()
@@ -95,6 +98,8 @@ class SharingSession(
         val endedEvent = eventId.value
         val interrupted = current.transfers.filter { it.eventId == endedEvent && it.status !in terminalStates }
         eventId.value = null
+        handshakeJobs.values.forEach { it.cancel() }
+        handshakeJobs.clear()
         refreshJobs.values.forEach { it.cancel() }
         refreshJobs.clear()
         receivingJobs.values.forEach { it.cancel() }
@@ -115,11 +120,13 @@ class SharingSession(
                 val localEvent = current.events.find { it.id == eventId.value } ?: return
                 val profile = current.profile ?: return
                 digits[event.endpointId] = event.authenticationDigits
+                awaitEventHandshake(event.endpointId)
                 transport.sendMessage(event.endpointId, WireMessage.Hello(localEvent.id, profile.id, profile.nickname,
                     InvitationProof.create(localEvent.secret, localEvent.id, profile.id, profile.nickname, event.authenticationDigits)))
             }
             is TransportEvent.Message -> handleMessage(event.endpointId, event.message)
             is TransportEvent.Disconnected -> {
+                handshakeJobs.remove(event.endpointId)?.cancel()
                 val peerId = identities.remove(event.endpointId)
                 readyPeers -= event.endpointId
                 digits.remove(event.endpointId)
@@ -173,7 +180,10 @@ class SharingSession(
         when (message) {
             is WireMessage.Hello -> Unit
             is WireMessage.EventReady -> {
-                if (!readyPeers.add(endpoint)) return
+                if (endpoint in readyPeers || transport.peers.value.none { it.endpointId == endpoint && it.status == PeerStatus.CONNECTED }) return
+                transport.markPeerReady(endpoint)
+                readyPeers += endpoint
+                handshakeJobs.remove(endpoint)?.cancel()
                 sendReferences(endpoint)
                 current.transfers.filter { it.eventId == active && it.ownerId == peer && it.direction == TransferDirection.RECEIVE && it.status == TransferStatus.COMPLETE }.forEach {
                     if (validPeer(endpoint, active, peer)) transport.sendMessage(endpoint, WireMessage.Receipt(active, it.requestId, it.photoId, it.sha256))
@@ -277,6 +287,18 @@ class SharingSession(
             else WireMessage.Revoke(active, faceDataOnly = true)
         val targets = if (endpoint != null) listOf(endpoint) else identities.keys.toList()
         targets.forEach { target -> if (identities[target]?.let { validPeer(target, active, it) } == true) transport.sendMessage(target, message) }
+    }
+
+    private fun awaitEventHandshake(endpoint: String) {
+        handshakeJobs.remove(endpoint)?.cancel()
+        val session = generation
+        handshakeJobs[endpoint] = scope.launch {
+            delay(handshakeTimeoutMillis)
+            if (session == generation && endpoint !in readyPeers) {
+                transport.disconnect(endpoint)
+                notify("Event verification took too long. Keep both apps open, reconnect, and compare the codes again.")
+            }
+        }
     }
 
     fun refreshAll() { identities.keys.toList().forEach(::refresh) }
@@ -510,7 +532,15 @@ class SharingSession(
         } catch (cancelled: CancellationException) {
             throw cancelled
         } catch (_: Exception) {
-            receiving?.let { changeTransfer(it, it.copy(status = TransferStatus.FAILED, error = "Original could not be verified or saved. Check space, reconnect, and retry.")) }
+            receiving?.let { transfer ->
+                val failed = changeTransfer(transfer, transfer.copy(status = TransferStatus.FAILED, payloadId = null,
+                    error = "Original could not be verified or saved. Check space, reconnect, and retry."))
+                if (failed && validPeer(event.endpointId, transfer.eventId, transfer.ownerId)) {
+                    try { transport.sendMessage(event.endpointId, WireMessage.Error(transfer.eventId, transfer.requestId, "original_not_saved")) }
+                    catch (cancelled: CancellationException) { throw cancelled }
+                    catch (_: Exception) { notify("Download failed. Reconnect both phones before retrying.") }
+                }
+            }
         } finally {
             temporary?.delete()
             runCatching { context.contentResolver.delete(event.uri, null, null) }

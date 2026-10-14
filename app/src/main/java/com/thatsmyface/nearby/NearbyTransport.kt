@@ -23,6 +23,7 @@ import com.google.android.gms.nearby.connection.Strategy
 import com.google.android.gms.tasks.Task
 import java.io.Closeable
 import java.io.File
+import java.io.IOException
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.flow.MutableSharedFlow
@@ -172,6 +173,10 @@ class NearbyTransport(context: Context, private val scope: CoroutineScope) : Nea
     override fun allowPeer(endpointId: String) {
         check(peer(endpointId)?.status == PeerStatus.CONNECTED && endpointId in accepted) { "Verify this friend first" }
         allowed += endpointId
+    }
+
+    override fun markPeerReady(endpointId: String) {
+        check(peer(endpointId)?.status == PeerStatus.CONNECTED && endpointId in allowed) { "Finish checking this event first" }
         updatePeer(endpointId) { it.copy(status = PeerStatus.VERIFIED) }
     }
 
@@ -394,8 +399,11 @@ class NearbyTransport(context: Context, private val scope: CoroutineScope) : Nea
     private data class ExpectedFile(val endpointId: String, val byteCount: Long)
 }
 
-private suspend fun <T> Task<T>.awaitResult(): T = suspendCancellableCoroutine { continuation ->
+internal suspend fun <T> Task<T>.awaitResult(): T = suspendCancellableCoroutine { continuation ->
     addOnSuccessListener { if (continuation.isActive) continuation.resume(it) }
     addOnFailureListener { if (continuation.isActive) continuation.resumeWithException(it) }
-    addOnCanceledListener { continuation.cancel() }
+    addOnCanceledListener {
+        // SDK cancellation must not terminate the sharing event collector.
+        if (continuation.isActive) continuation.resumeWithException(IOException("Nearby operation was cancelled. Reconnect and retry."))
+    }
 }

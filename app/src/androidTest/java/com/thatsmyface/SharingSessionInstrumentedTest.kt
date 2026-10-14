@@ -161,11 +161,40 @@ class SharingSessionInstrumentedTest {
             assertTrue(fixture.ownerLink.messages.none(::isPrivate))
             assertTrue(fixture.receiverLink.messages.none(::isPrivate))
             assertTrue(fixture.receiverStore.state.value.offers.isEmpty())
+            assertEquals(PeerStatus.CONNECTED, fixture.ownerLink.peers.value.single().status)
+            assertEquals(PeerStatus.CONNECTED, fixture.receiverLink.peers.value.single().status)
             release.complete(Unit)
             fixture.await { fixture.receiverStore.state.value.offers.size == 1 }
             assertTrue(fixture.ownerLink.messages.any { it is WireMessage.Catalog })
             assertTrue(fixture.failures.isEmpty())
         } finally { fixture.close() }
+    }
+
+    @Test fun stalledEventVerificationDisconnectsWithoutPrivateDataAndCanReconnect() = runBlocking {
+        val fixture = Fixture(handshakeTimeoutMillis = 2_000)
+        val release = CompletableDeferred<Unit>()
+        try {
+            fixture.initialize()
+            fixture.ownerLink.readyBarrier = release
+            fixture.pair(waitForCatalog = false)
+            fixture.await { fixture.ownerLink.readyEntered }
+            fixture.await { fixture.ownerLink.peers.value.singleOrNull()?.status == PeerStatus.DISCONNECTED }
+            assertTrue(fixture.ownerLink.messages.none(::isPrivate))
+            assertTrue(fixture.receiverLink.messages.none(::isPrivate))
+            assertTrue(fixture.receiverStore.state.value.offers.isEmpty())
+            assertNull(fixture.owner.endpointFor(fixture.event.id, fixture.receiverStore.state.value.profile!!.id))
+            assertTrue(fixture.notices.any { it.contains("verification took too long") })
+            release.complete(Unit)
+            fixture.ownerLink.readyBarrier = null
+            fixture.await { fixture.notices.any { it.startsWith("Sharing could not finish") } }
+            withContext(Dispatchers.Main) {
+                fixture.owner.start(fixture.event)
+                fixture.receiver.start(fixture.event)
+            }
+            fixture.pair()
+            assertEquals(PeerStatus.VERIFIED, fixture.ownerLink.peers.value.single().status)
+            assertEquals(PeerStatus.VERIFIED, fixture.receiverLink.peers.value.single().status)
+        } finally { release.complete(Unit); fixture.close() }
     }
 
     @Test fun rejectionCancellationAndLateApprovalNeverSendAnOriginal() = runBlocking {
@@ -212,7 +241,7 @@ class SharingSessionInstrumentedTest {
         } finally { fixture.close() }
     }
 
-    @Test fun corruptPayloadFailsIntegrityWithoutCompletionReceipt() = runBlocking {
+    @Test fun corruptPayloadFailsOnBothPhonesAndCanBeRequestedAgain() = runBlocking {
         val fixture = Fixture()
         try {
             fixture.initialize()
@@ -220,11 +249,21 @@ class SharingSessionInstrumentedTest {
             fixture.request()
             fixture.ownerLink.corruptNextFile = true
             withContext(Dispatchers.Main) { fixture.owner.approve(fixture.ownerTransfer()) }
-            fixture.await { fixture.receiverTransfer()?.status == TransferStatus.FAILED }
+            fixture.await { fixture.receiverTransfer()?.status == TransferStatus.FAILED && fixture.ownerTransfer().status == TransferStatus.FAILED }
             assertNull(fixture.receiverTransfer()?.savedUri)
+            assertNull(fixture.receiverTransfer()?.payloadId)
             assertNotEquals(TransferStatus.COMPLETE, fixture.ownerTransfer().status)
             assertTrue(fixture.receiverLink.messages.none { it is WireMessage.Receipt })
             assertArrayEquals(fixture.original, fixture.read(fixture.source))
+            val failedRequest = fixture.ownerTransfer().requestId
+            withContext(Dispatchers.Main) { fixture.receiver.retry(requireNotNull(fixture.receiverTransfer())) }
+            fixture.await { fixture.ownerTransfer().status == TransferStatus.AWAITING_APPROVAL }
+            assertNotEquals(failedRequest, fixture.ownerTransfer().requestId)
+            assertFalse(fixture.ownerTransfer().approved)
+            withContext(Dispatchers.Main) { fixture.owner.approve(fixture.ownerTransfer()) }
+            fixture.await { fixture.receiverTransfer()?.status == TransferStatus.COMPLETE && fixture.ownerTransfer().status == TransferStatus.COMPLETE }
+            assertEquals(2, fixture.ownerLink.filesSent)
+            assertArrayEquals(fixture.original, fixture.read(Uri.parse(fixture.receiverTransfer()!!.savedUri)))
         } finally { fixture.close() }
     }
 
@@ -426,7 +465,7 @@ class SharingSessionInstrumentedTest {
         } finally { fixture.close() }
     }
 
-    private class Fixture {
+    private class Fixture(handshakeTimeoutMillis: Long = 30_000) {
         val context: Context = InstrumentationRegistry.getInstrumentation().targetContext
         private val testId = newId()
         val ownerContext = IsolatedContext(context, "$testId-owner")
@@ -436,13 +475,14 @@ class SharingSessionInstrumentedTest {
         val ownerStore = LocalStore(ownerContext, ownerKey)
         val receiverStore = LocalStore(receiverContext, receiverKey)
         val failures = CopyOnWriteArrayList<Throwable>()
+        val notices = CopyOnWriteArrayList<String>()
         private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate + CoroutineExceptionHandler { _, error -> failures += error })
         private val temporaryUris = mutableListOf<Uri>()
         val event = Event(title = "Synthetic sharing fixture", secret = "a".repeat(64))
         val ownerLink = TestLink("owner-endpoint", scope, ::stage)
         val receiverLink = TestLink("receiver-endpoint", scope, ::stage)
-        val owner = SharingSession(ownerContext, ownerStore, PhotoFiles(ownerContext), FaceEngine(ownerContext), scope, {}, ownerLink)
-        val receiver = SharingSession(receiverContext, receiverStore, PhotoFiles(receiverContext), FaceEngine(receiverContext), scope, {}, receiverLink)
+        val owner = SharingSession(ownerContext, ownerStore, PhotoFiles(ownerContext), FaceEngine(ownerContext), scope, { notices += it }, ownerLink, handshakeTimeoutMillis)
+        val receiver = SharingSession(receiverContext, receiverStore, PhotoFiles(receiverContext), FaceEngine(receiverContext), scope, { notices += it }, receiverLink, handshakeTimeoutMillis)
         lateinit var source: Uri
         lateinit var original: ByteArray
 
@@ -603,13 +643,14 @@ class SharingSessionInstrumentedTest {
             other.peers.value = other.peers.value.map { it.copy(status = PeerStatus.DISCONNECTED) }
             scope.launch { events.emit(TransportEvent.Disconnected(other.id)); other.events.emit(TransportEvent.Disconnected(id)) }
         }
-        override fun allowPeer(endpointId: String) { check(accepted); allowed = true; peers.value = peers.value.map { it.copy(status = PeerStatus.VERIFIED) } }
+        override fun allowPeer(endpointId: String) { check(accepted); allowed = true }
+        override fun markPeerReady(endpointId: String) { check(allowed); peers.value = peers.value.map { it.copy(status = PeerStatus.VERIFIED) } }
         override suspend fun sendMessage(endpointId: String, message: WireMessage) {
             connectedEvents?.await()
             if (message is WireMessage.Ready && failNextReady) { failNextReady = false; error("Injected acknowledgment failure") }
             if (message is WireMessage.Cancel && failNextCancel) { failNextCancel = false; error("Injected cancellation notice failure") }
-            check(endpointId == other.id && accepted && other.accepted)
             if (message is WireMessage.EventReady) { readyEntered = true; readyBarrier?.await() }
+            check(endpointId == other.id && accepted && other.accepted)
             check(message is WireMessage.Hello || allowed)
             val decoded = WireCodec.decode(WireCodec.encode(message), other.event)
             check(decoded is WireMessage.Hello || (decoded is WireMessage.EventReady && other.receivedHello) || other.allowed) { "Private data arrived before event verification" }

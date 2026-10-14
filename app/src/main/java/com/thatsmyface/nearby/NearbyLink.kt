@@ -16,6 +16,7 @@ interface NearbyLink {
     fun reject(endpointId: String)
     fun disconnect(endpointId: String)
     fun allowPeer(endpointId: String)
+    fun markPeerReady(endpointId: String)
     suspend fun sendMessage(endpointId: String, message: WireMessage)
     fun prepareFile(file: File): PreparedFile
     fun prepareFile(descriptor: ParcelFileDescriptor): PreparedFile
