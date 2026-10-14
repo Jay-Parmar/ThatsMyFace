@@ -14,4 +14,5 @@
 - No backend, cloud photo storage, analytics, accounts, or hosted recognition. Document third-party diagnostics accurately.
 - Recognition must execute a real licensed model. Verify weights licensing separately, record provenance and checksums, and test preprocessing and inference with licensed fixtures.
 - Run relevant build, lint, and behavioral tests. Distinguish automated, emulator, and physical-phone results. Never claim unperformed verification.
+- After each verified ordinary APK build, copy it to `D:\Fun\Artifacts\ThatsMyFace-latest.apk` and verify its SHA-256 matches the build output. Never publish an isolated device-check APK as the latest app.
 - Continue unblocked work when hardware or external services are unavailable. Do not leave mock success paths or present incomplete recognition/sharing as completed v1.
