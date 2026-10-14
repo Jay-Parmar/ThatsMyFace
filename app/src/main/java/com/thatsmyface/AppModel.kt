@@ -29,14 +29,16 @@ class AppModel @JvmOverloads constructor(application: Application, val store: Lo
     val busy = _busy.asStateFlow()
     private val _message = MutableStateFlow<String?>(null)
     val message = _message.asStateFlow()
-    val selectedEventId = MutableStateFlow<String?>(null)
+    private val _selectedEventId = MutableStateFlow<String?>(null)
+    val selectedEventId = _selectedEventId.asStateFlow()
     val scanSummary = MutableStateFlow<String?>(null)
 
     init {
         runAction {
             try { store.load() }
             catch (error: Exception) { loadFailed.value = true; throw error }
-            selectedEventId.value = state.value.events.firstOrNull()?.id
+            _selectedEventId.value = state.value.events.find { it.id == state.value.selectedEventId }?.id
+                ?: state.value.events.firstOrNull()?.id
             _ready.value = true
         }
         viewModelScope.launch {
@@ -73,8 +75,14 @@ class AppModel @JvmOverloads constructor(application: Application, val store: Lo
 
     fun createEvent(title: String) = runAction {
         val event = Invitations.create(title)
-        store.update { it.copy(events = it.events + event) }
-        selectedEventId.value = event.id
+        store.update { it.copy(events = it.events + event, selectedEventId = event.id) }
+        _selectedEventId.value = event.id
+    }
+
+    fun selectEvent(eventId: String) = runAction {
+        requireEvent(eventId)
+        store.update { it.copy(selectedEventId = eventId) }
+        _selectedEventId.value = eventId
     }
 
     fun joinEvent(invitation: String) = runAction {
@@ -82,9 +90,9 @@ class AppModel @JvmOverloads constructor(application: Application, val store: Lo
         store.update {
             val existing = it.events.find { entry -> entry.id == event.id }
             require(existing == null || existing.secret == event.secret) { "This invitation conflicts with the saved event." }
-            if (existing == null) it.copy(events = it.events + event) else it
+            it.copy(events = if (existing == null) it.events + event else it.events, selectedEventId = event.id)
         }
-        selectedEventId.value = event.id
+        _selectedEventId.value = event.id
     }
 
     fun importPhotos(uris: List<Uri>) = importPhotos(selectedEventId.value, uris)
@@ -201,7 +209,7 @@ class AppModel @JvmOverloads constructor(application: Application, val store: Lo
         withContext(Dispatchers.IO) {
             listOf("outgoing", "incoming").forEach { name -> java.io.File(getApplication<Application>().cacheDir, name).deleteRecursively() }
         }
-        selectedEventId.value = null
+        _selectedEventId.value = null
         scanSummary.value = null
         _ready.value = true
         loadFailed.value = false

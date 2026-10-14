@@ -96,7 +96,7 @@ class AppModelInstrumentedTest {
             assertTrue(model.message.value!!.contains("Access was removed"))
             assertEquals(1, model.state.value.photos.size)
 
-            withContext(Dispatchers.Main) { model.selectedEventId.value = capturedEvent }
+            fixture.act { model.selectEvent(capturedEvent) }
             val photo = model.state.value.photos.single()
             fixture.act { model.toggleTag(photo, model.state.value.profile!!.id) }
             assertEquals(1, model.state.value.offers.size)
@@ -105,6 +105,44 @@ class AppModelInstrumentedTest {
             assertTrue(model.state.value.offers.isEmpty())
             fixture.act { model.removePhoto(model.state.value.photos.single()) }
             assertTrue(model.state.value.photos.isEmpty())
+        } finally { fixture.close() }
+    }
+
+    @Test fun selectedEventSurvivesReopeningAndInvalidSelectionKeepsTheCurrentEvent() = runBlocking {
+        val fixture = Fixture()
+        try {
+            fixture.initialize()
+            fixture.act { fixture.model.createEvent("First fixture event") }
+            val first = requireNotNull(fixture.model.selectedEventId.value)
+            fixture.act { fixture.model.createEvent("Second fixture event") }
+            val second = requireNotNull(fixture.model.selectedEventId.value)
+            fixture.reopen()
+            assertEquals(second, fixture.model.selectedEventId.value)
+            fixture.act { fixture.model.selectEvent(first) }
+            fixture.reopen()
+            assertEquals(first, fixture.model.selectedEventId.value)
+            fixture.act { fixture.model.selectEvent("missing-event") }
+            assertEquals(first, fixture.model.selectedEventId.value)
+            assertEquals(first, fixture.model.state.value.selectedEventId)
+            fixture.act { fixture.model.joinEvent(Invitations.encode(fixture.model.state.value.events.last())) }
+            fixture.reopen()
+            assertEquals(second, fixture.model.selectedEventId.value)
+            assertEquals(2, fixture.model.state.value.events.size)
+        } finally { fixture.close() }
+    }
+
+    @Test fun oldOrMissingEventSelectionFallsBackToAnAvailableEvent() = runBlocking {
+        val fixture = Fixture()
+        try {
+            fixture.initialize()
+            fixture.act { fixture.model.createEvent("Existing fixture event") }
+            val existing = fixture.model.state.value.events.single().id
+            fixture.store.update { it.copy(selectedEventId = null) }
+            fixture.reopen()
+            assertEquals(existing, fixture.model.selectedEventId.value)
+            fixture.store.update { it.copy(selectedEventId = "removed-event") }
+            fixture.reopen()
+            assertEquals(existing, fixture.model.selectedEventId.value)
         } finally { fixture.close() }
     }
 
@@ -128,6 +166,12 @@ class AppModelInstrumentedTest {
         suspend fun act(action: () -> Unit) {
             withContext(Dispatchers.Main) { action() }
             withTimeout(20_000) { model.busy.first { !it } }
+        }
+
+        suspend fun reopen() {
+            withContext(Dispatchers.Main) { model.stopSharing(); model.viewModelScope.cancel() }
+            model = withContext(Dispatchers.Main) { AppModel(application, LocalStore(application, keyAlias)) }
+            withTimeout(10_000) { model.ready.first { it } }
         }
 
         fun read(uri: Uri): ByteArray = context.contentResolver.openInputStream(uri)!!.use { it.readBytes() }

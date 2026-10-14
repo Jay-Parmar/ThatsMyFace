@@ -100,7 +100,7 @@ internal fun EventsPage(model: AppModel, state: AppState, selected: Event?, busy
         } }
         items(state.events, key = { it.id }) { event ->
             Panel(event.title, if (event.id == selected?.id) "Your selected event" else "Saved on this phone") {
-                Button(onClick = { model.selectedEventId.value = event.id; openPhotos() }, enabled = !busy,
+                Button(onClick = { model.selectEvent(event.id); openPhotos() }, enabled = !busy,
                     modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp)) { Text("Open photos") }
                 OutlinedButton(onClick = { qrEvent = event }, modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp)) {
                     Text("Show invitation")
